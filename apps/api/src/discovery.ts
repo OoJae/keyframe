@@ -25,6 +25,8 @@ export function llmsTxt(cfg: Config): string {
 1. GET ${cfg.publicBaseUrl}/v1/styles: formats, styles and prices.
 2. POST ${cfg.publicBaseUrl}/v1/quotes with {buyer, format, params, rights_confirmed: true}. Instant quotes start
    as "draft" while the key frame and encrypted file render; poll GET /v1/quotes/{quote_id} until "final".
+   503 studio_offline: the render studio is offline, so no Instant quote was made and nothing was charged;
+   retry after Retry-After. Studio (hand-made) commissions stay open.
 3. Any method on ${cfg.publicBaseUrl}/v1/orders/{quote_id} answers HTTP 402 (x402 ${cfg.wire}, scheme exact,
    network ${CAIP2}, asset USDC ${USDC}, payTo = the order's escrow, amount = the quoted price). Pay it with an
    EIP-3009 authorization from the quoted buyer wallet. The 200 response carries order_id and access_token.
@@ -102,7 +104,7 @@ export function openApi(cfg: Config) {
             "422": err("Content policy"),
             "429": err("Rate limited"),
             "451": err("Sanctioned buyer"),
-            "503": err("Unavailable"),
+            "503": err("Unavailable (studio_offline: the render studio is offline, Instant only; nothing charged)"),
           },
         },
       },

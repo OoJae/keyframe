@@ -201,16 +201,30 @@ try {
   check("catalog", styles.formats.length === 7);
 
   const buyer = chain ? chain.buyer.address : hex(randomBytes(20));
-  const qres = await call("/v1/quotes", {
+  const quote = () =>
+    call("/v1/quotes", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        buyer,
+        format: "countdown",
+        rights_confirmed: true,
+        params: { style: "tminus", label: "Mainnet", target: new Date(Date.now() + 86_400_000).toISOString() },
+      }),
+    });
+  // no render worker has polled yet: Instant quotes fail fast instead of leaving a draft nothing will render
+  const offline = await quote();
+  check(
+    "no render worker yet → 503 studio_offline",
+    offline.status === 503 && (await offline.json()).error === "studio_offline",
+  );
+  const idle = await call("/internal/jobs/claim", {
     method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      buyer,
-      format: "countdown",
-      rights_confirmed: true,
-      params: { style: "tminus", label: "Mainnet", target: new Date(Date.now() + 86_400_000).toISOString() },
-    }),
+    headers: { ...auth, "content-type": "application/json" },
+    body: JSON.stringify({ worker_id: "smoke" }),
   });
+  check("render worker polls (204, now online)", idle.status === 204);
+  const qres = await quote();
   const draft = await qres.json();
   check("POST /v1/quotes → 201 draft", qres.status === 201 && draft.status === "draft", `${qres.status}`);
   const notReady = await call(`/v1/orders/${draft.quote_id}`, { method: "POST" });

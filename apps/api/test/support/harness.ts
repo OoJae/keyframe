@@ -75,6 +75,12 @@ export class Harness {
   readonly app: ReturnType<typeof createApp>;
   private readonly pendingBackground: Promise<unknown>[] = [];
   listFetch: () => Promise<Response> = async () => new Response("[]");
+  /**
+   * A render worker that polls constantly (seen at every request), so Instant quotes are not refused as
+   * studio_offline. Liveness tests turn it off with stopRenderWorker().
+   */
+  private renderWorkerAlive = true;
+  static readonly RENDER_WORKER_ID = "harness-render-worker";
 
   constructor(o: HarnessOptions = {}) {
     this.buyer = o.buyer ?? privateKeyToAccount(generatePrivateKey());
@@ -147,7 +153,21 @@ export class Harness {
     return privateKeyToAccount(this.relayerKey).address;
   }
 
+  /** The background render worker goes away (its last-seen row is removed). */
+  stopRenderWorker(): void {
+    this.renderWorkerAlive = false;
+    this.db.raw.prepare("DELETE FROM worker_heartbeats WHERE worker_id = ?").run(Harness.RENDER_WORKER_ID);
+  }
+
   async request(path: string, init: RequestInit = {}): Promise<Response> {
+    if (this.renderWorkerAlive) {
+      this.db.raw
+        .prepare(
+          `INSERT INTO worker_heartbeats (worker_id, seen_at) VALUES (?, ?)
+           ON CONFLICT (worker_id) DO UPDATE SET seen_at = excluded.seen_at`,
+        )
+        .run(Harness.RENDER_WORKER_ID, this.nowS());
+    }
     const ctx = {
       waitUntil: (p: Promise<unknown>) => {
         this.pendingBackground.push(p);

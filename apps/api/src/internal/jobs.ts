@@ -5,6 +5,7 @@ import type { JobKind, JobRow, OrderRow, QuoteRow } from "../db/rows.js";
 import { checkChunk, checkManifest, checkPreview, checkStill, verifyStored } from "../delivery/artifacts.js";
 import { fileKey, quoteKeys, rawFileKey } from "../delivery/keys.js";
 import { error, json } from "../http.js";
+import { touchRenderWorker } from "../liveness.js";
 import { encodeFactoryCall, runAction, studioWindows } from "../orders/lifecycle.js";
 import { finalizeInstantQuote, JOB_ID } from "../quotes/service.js";
 import { termsOf } from "../quotes/view.js";
@@ -99,7 +100,8 @@ export async function jobInputs(s: Services, job: JobRow, q: QuoteRow) {
 
 export async function claim(s: Services, workerId: string, kinds: readonly JobKind[]): Promise<Response> {
   const now = nowS(s);
-  await s.repo.touchWorker(workerId, now);
+  // Only a worker that takes Instant renders keeps the render studio "online" (liveness.ts).
+  if (kinds.includes("instant_render")) await touchRenderWorker(s, workerId);
   const job = await s.repo.claimJob(workerId, kinds, now, LEASE_S);
   if (!job) return new Response(null, { status: 204 });
   const q = await s.repo.getQuote(job.quote_id);
@@ -127,7 +129,8 @@ export async function heldJob(
 export async function heartbeat(s: Services, job: JobRow, progress: number | null): Promise<Response> {
   const lease = job.kind === "studio_delivery" ? STUDIO_LEASE_S : LEASE_S;
   const ok = await s.repo.heartbeatJob(job.id, job.worker_id ?? "", progress, nowS(s), lease);
-  await s.repo.touchWorker(job.worker_id ?? "", nowS(s));
+  // A busy render worker stops polling; its job heartbeats keep it online. Studio CLI deliveries do not count.
+  if (job.kind === "instant_render" && job.worker_id) await touchRenderWorker(s, job.worker_id);
   return ok ? json(200, { ok: true, lease_expires_at: nowS(s) + lease }) : error(409, { error: "job_not_claimed" });
 }
 

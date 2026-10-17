@@ -37,6 +37,7 @@ export interface RawEnv {
   QUOTES_PER_BUYER_PER_HOUR?: string;
   MAX_QUEUED_RENDERS?: string;
   MAX_QUEUED_RENDERS_PER_CLIENT?: string;
+  WORKER_STALE_S?: string;
   RATE_LIMITS?: string;
   RELAYER_TX_PER_HOUR?: string;
   RELAYER_LOW_BALANCE_WEI?: string;
@@ -82,6 +83,8 @@ export interface Config {
   /** Instant renders queued or running, overall and per client (hashed IP, else buyer). */
   maxQueuedRenders: number;
   maxQueuedRendersPerClient: number;
+  /** Seconds after a render worker's last poll or job heartbeat before the render studio counts as offline. */
+  workerStaleS: number;
   /** Per-client token buckets on costly public endpoints ("off" disables; for load tests only). */
   rateLimits: boolean;
   /** Relayer DO: non-fund broadcasts per hour, and the ETH balance (wei) below which it alarms. */
@@ -258,6 +261,7 @@ export function parseConfig(env: RawEnv): Config {
     quotesPerBuyerPerHour: int(env.QUOTES_PER_BUYER_PER_HOUR, 30, 1, 10_000),
     maxQueuedRenders: int(env.MAX_QUEUED_RENDERS, 50, 1, 10_000),
     maxQueuedRendersPerClient: int(env.MAX_QUEUED_RENDERS_PER_CLIENT, 3, 1, 1000),
+    workerStaleS: int(env.WORKER_STALE_S, 120, 30, 3600),
     rateLimits: env.RATE_LIMITS !== "off",
     relayerTxPerHour: int(env.RELAYER_TX_PER_HOUR, 120, 1, 100_000),
     relayerLowBalanceWei:

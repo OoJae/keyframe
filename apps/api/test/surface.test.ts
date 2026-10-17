@@ -61,6 +61,40 @@ describe("public surface", () => {
     expect(Object.keys(oa.paths)).toContain("/v1/orders/{quote_id}");
   });
 
+  it("/v1/styles and /health say when the render studio is offline (Instant only)", async () => {
+    const h = new Harness();
+    h.stopRenderWorker();
+    const styles = async () => {
+      const all = await (await h.request("/v1/styles")).json();
+      return (id: string) => all.formats.find((f: { id: string }) => f.id === id);
+    };
+    let byId = await styles();
+    expect(byId("countdown")).toMatchObject({ available: false, availability: "studio offline" });
+    expect(byId("studio_sting").available).toBe(true);
+    expect(byId("studio_sting").availability).toBeUndefined();
+    expect(byId("launch_sting").availability).toBe("not available yet");
+    for (const id of ["launch_sting", "countdown", "portfolio_pulse", "kinetic_post", "chart_moment"]) {
+      expect(byId(id).availability.length, id).toBeLessThanOrEqual(30); // the plugin prints ≤30 chars
+    }
+    expect((await (await h.request("/health")).json()).render).toMatchObject({
+      online: false,
+      last_worker_seen_s: null,
+      queue: 0,
+    });
+    // the render worker polls once
+    await h.internal("/jobs/claim", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ worker_id: "mac-1" }),
+    });
+    byId = await styles();
+    expect(byId("countdown").available).toBe(true);
+    expect(byId("countdown").availability).toBeUndefined();
+    expect((await (await h.request("/health")).json()).render).toMatchObject({ online: true, last_worker_seen_s: 0 });
+    h.advance(121);
+    expect((await styles())("countdown").availability).toBe("studio offline");
+  });
+
   it("/internal/* requires the worker bearer token; job calls require the holder's X-Worker-Id", async () => {
     const h = new Harness();
     await h.createQuote();

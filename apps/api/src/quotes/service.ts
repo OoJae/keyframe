@@ -3,6 +3,7 @@ import { type Address, getAddress, type Hex } from "viem";
 import { MAX_KILL_FEE_BPS, MAX_REVIEW_WINDOW_S } from "../config.js";
 import type { QuoteRow } from "../db/rows.js";
 import { error, json } from "../http.js";
+import { renderLiveness, STUDIO_OFFLINE } from "../liveness.js";
 import { nowS, type Services } from "../services.js";
 import {
   buildSpec,
@@ -69,6 +70,14 @@ export async function createQuote(s: Services, body: unknown, client = "local"):
   if (screening === "sanctioned") return error(451, { error: "sanctioned", detail: "this address cannot be served" });
   if (screening === "unavailable") return error(503, { error: "screening_unavailable", detail: "try again later" });
   if (plan.tier === "instant") {
+    // Fail fast instead of leaving a draft that never renders (no quote row; Studio quotes stay open).
+    if (!(await renderLiveness(s)).online) {
+      return error(
+        503,
+        { error: "studio_offline", detail: STUDIO_OFFLINE, processed: false },
+        { "Retry-After": "300" },
+      );
+    }
     const queue = await s.repo.renderQueue(client);
     if (queue.owner >= cfg.maxQueuedRendersPerClient) {
       return error(

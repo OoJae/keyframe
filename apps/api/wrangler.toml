@@ -91,6 +91,9 @@ QUOTES_PER_BUYER_PER_HOUR = "30"
 # Instant renders queued or running: in total, and per client (hashed IP). The worker claims round-robin by client.
 MAX_QUEUED_RENDERS = "50"
 MAX_QUEUED_RENDERS_PER_CLIENT = "3"
+# Seconds since a render worker last polled for (or heartbeated) an Instant render before Instant quotes answer
+# 503 studio_offline and /v1/styles says "studio offline". Last-seen is written at most every 30 s.
+WORKER_STALE_S = "120"
 # Relayer DO: non-fund transactions per clock hour (fundWithAuthorization is never refused), and the ETH balance
 # (wei) below which every broadcast logs relayer_low_balance at error level.
 RELAYER_TX_PER_HOUR = "120"

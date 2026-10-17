@@ -88,6 +88,7 @@ src/orders/              paid path, settlement bookkeeping + orphan adoption (se
 src/ratelimit.ts         per-client D1 token buckets (+ optional Cloudflare Rate Limiting binding)
 src/redact.ts            error text without RPC URLs, request bodies or key-like tokens
 src/internal/jobs.ts     render-worker and Studio delivery API
+src/liveness.ts          render-studio liveness (throttled last-seen; studio_offline gate, /v1/styles, /health)
 src/delivery/            K_file derivation, artifact validation and self-verification (KFC1)
 src/relayer/             RelayerCore (nonces, simulate-then-send, raw-tx store, reconciliation) + Durable Object
 src/chain.ts             read-only viem client (+ read-only signer for the x402 verifier)
@@ -115,6 +116,7 @@ Vars live in `wrangler.toml`, secrets in `wrangler secret put` (locally: `.dev.v
 | `QUOTE_TTL_S` 600 · `DRAFT_TTL_S` 900 · `MIN_RELEASE_MARGIN_S` 300 (≥ 180) · `RECEIPT_WAIT_MS` 1200 | var | Timing. Instant `deadline_minutes × 60` must be ≥ `MIN_RELEASE_MARGIN_S` |
 | `STUDIO_REVIEW_S` 86400 (≤ 7 d) · `STUDIO_KILL_FEE_BPS` 0 (≤ 5000) · `STUDIO_MAX_OPEN` 3 · `MAX_INFLIGHT_ORDERS` 20 | var | Studio terms and capacity gate. A kill fee above 5000 is a configuration problem (the factory refuses it) |
 | `MAX_QUEUED_RENDERS` 50 · `MAX_QUEUED_RENDERS_PER_CLIENT` 3 · `RATE_LIMITS` (`off` disables) | var | Render-queue caps (per hashed client IP) and the D1 token buckets |
+| `WORKER_STALE_S` 120 (30–3600) | var | Render-studio liveness. With no render worker poll or Instant-job heartbeat for this long, Instant quotes answer 503 `studio_offline` (no quote row), `/v1/styles` marks Instant formats "studio offline" and `/health` `render.online` is false. Studio CLI calls never count. Last-seen is written at most every min(30, WORKER_STALE_S/4) s per worker (D1 row writes) |
 | `RELAYER_TX_PER_HOUR` 120 · `RELAYER_LOW_BALANCE_WEI` 5e14 | var | Relayer DO: non-fund transactions per clock hour (beyond it sends are refused and logged loudly; `fundWithAuthorization` is never refused) and the low-ETH alarm |
 | `OFAC_MAX_AGE_S` 7 d · `OFAC_REFRESH_S` 6 h · `OFAC_LIST_URL` | var | Sanctions list (0xB10C ETH list by default) |
 | `FORMATS_DISABLED` (`chart_moment`) · `POLICY_DENYLIST` · `QUOTES_PER_BUYER_PER_HOUR` 30 · `MAINTENANCE` | var | Product switches |
