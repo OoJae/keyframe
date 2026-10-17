@@ -29,6 +29,8 @@ Base in your wallet:
    a watch & download link. The page opens the video in your browser with the key read from Base
    ([example: the first mainnet order](https://keyframe-api.keyframe-spike-server.workers.dev/w/o_YF8xCvJy3fusQUQzaJCMjG)).
 
+Keyframe is submitted to the PayBox marketplace as an unofficial plugin, still in review. Until PayBox publishes it for everyone, anyone can order through the open x402 API instead: it uses the same escrow and the same guarantee ([llms.txt](https://keyframe-api.keyframe-spike-server.workers.dev/llms.txt) walks through it).
+
 If the studio is late, the keeper refunds you automatically; you don't need to do anything. Today you can order Countdown
 (instant, $1) and Studio commissions (made by hand). The other formats in the catalog are marked "coming soon".
 
