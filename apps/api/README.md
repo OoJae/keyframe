@@ -13,7 +13,7 @@ decisions are in ADR-002, 003, 012, 014, 015 and 019 (security hardening) in `do
 | Route | What |
 |---|---|
 | `GET /v1/styles?tier&format` | Catalog: formats, styles, aspects, prices per duration, ETA, params, policy |
-| `POST /v1/quotes` | Body = `keyframe_quote` input (product-render-demo §A3). Per-client rate limit → validation → content policy → per-buyer rate limit → OFAC → render-queue caps (per client and total) → keys (§4) → spec (§6) → Terms (§1). Instant: `draft` plus a render job. Studio: `final` |
+| `POST /v1/quotes` | Body = `keyframe_quote` input (product-render-demo §A3). Per-client rate limit → validation → content policy → format availability → unsupported options (422 `unsupported_option`) → per-buyer rate limit → OFAC → Instant: render studio online (else 503 `studio_offline`, no quote) and render-queue caps (per client and total) → keys (§4) → spec (§6) → Terms (§1). Instant: `draft` plus a render job. Studio: `final` |
 | `GET /v1/quotes/{q}` | §7 quote object (`draft → final`, `paid`, `expired`, `cancelled`). Additive: `payable`, `terms_final`; drafts also carry `escrow_status: "provisional_do_not_pay"` and a `notice` (their escrow and terms change when the quote turns final) |
 | `POST /v1/quotes/{q}/rail` | Additive, best effort: check now for a direct `USDC.transfer` to E. Rate limited per client; at most one late-fund action per quote at a time, none for dust |
 | `ALL /v1/orders/{q}` | **x402 resource.** Unpaid: 402, byte-identical per quote. Draft: 425. Paid: 409. Expired or cancelled: 410. Paid request: replay (bound to the exact header) → verify (EIP-3009 only, payer = `from`) → checks (409 payer, 451 OFAC, 503 capacity, 410 expiry) → claim → settle → record → 200 §7 paid body |
@@ -254,9 +254,11 @@ verification.md §7.3.
 - Funds can only move to `T.buyer` or `T.seller` (contract invariant I1). The API's worst case is a delay, never
   a redirect.
 - Content policy (`src/quotes/policy.ts`) runs before quoting, on NFKC-normalised text with invisible characters
-  removed and Cyrillic/Greek lookalikes and leetspeak folded, including spelled-out words ("n.a.z.i") and every
-  nested string of catalog values and portfolio data; bare domains count as links. Studio briefs also get human
-  review.
+  removed and Cyrillic/Greek lookalikes and leetspeak folded, including spelled-out words ("n.a.z.i"), every
+  nested string of catalog values, and the printable fields (symbols, names) of a verbatim `get_portfolio`
+  result. Bare domains count as links, except in name fields (wordmark, label, title, handle, byline): an
+  ENS/Basename/SNS name ("jesse.base.eth") or a value that is exactly the brand's own ASCII domain ("pump.fun") is a
+  name. Studio briefs may name sites (never rendered; URLs go in `references`) and also get human review.
 - Hardening from the 2026-10 review (ADR-019): replay bound to the exact payment header and short-lived; Permit2 /
   mixed payloads refused and the verifier's payer must equal the authorization's `from`; settlement owned by
   `waitUntil` with keeper adoption of orphans; "dropped" only after a consistent read and a confirmation delay, and
