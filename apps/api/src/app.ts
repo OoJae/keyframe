@@ -128,7 +128,7 @@ function stylesView(s: Services, tier?: string, format?: string, studioOnline = 
       rules: [
         "Typed fields only; no free-text prompts. Omit optional fields rather than inventing names, colours or numbers.",
         "Confirm brand rights and that no real person's likeness is requested (rights_confirmed: true).",
-        "No links inside rendered text; logo_url must be https.",
+        "No links inside rendered text; a name field may be an ENS/Basename (name.eth) or the brand's own domain alone. logo_url must be https.",
         "Charts and portfolio values come from data, never from the model.",
         ...POLICY_NOTES,
       ],
