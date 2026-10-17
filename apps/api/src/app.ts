@@ -32,6 +32,10 @@ import { clientKey, RATE_RULES, throttle } from "./ratelimit.js";
 import { errorText } from "./redact.js";
 import { reviewChallenge, reviewSubmit } from "./reviews.js";
 import { nowS, type Services } from "./services.js";
+import { homePage } from "./web/home.js";
+import { notFoundPage } from "./web/html.js";
+import { previewPage } from "./web/preview.js";
+import { watchPage } from "./web/watch.js";
 
 // HTTP surface (frozen-interfaces.md §7 plus /files and /internal). Route handlers stay thin; behaviour lives in
 // the modules they call.
@@ -256,6 +260,17 @@ export function createApp(hooks: AppHooks) {
 
   // Public artifact storage (used when FILES_BASE_URL points here, e.g. KV-backed deployments).
   app.get("/files/*", (c) => serveFile(c.var.services, c.req.path.slice("/files/".length), c.req.raw));
+
+  // Human pages (src/web): front door, watch & download, quote preview.
+  app.get("/", (c) => homePage(c.var.services));
+  app.get("/w/:id", (c) => {
+    const id = c.req.param("id");
+    return ORDER_ID.test(id) ? watchPage(c.var.services, id) : notFoundPage(c.var.services.cfg, "Order");
+  });
+  app.get("/q/:id", (c) => {
+    const id = c.req.param("id");
+    return QUOTE_ID.test(id) ? previewPage(c.var.services, id) : notFoundPage(c.var.services.cfg, "Quote");
+  });
 
   // ------------------------------------------------------------------ internal (render worker, Studio CLI)
 

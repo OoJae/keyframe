@@ -18,11 +18,14 @@ decisions are in ADR-002, 003, 012, 014, 015 and 019 (security hardening) in `do
 | `POST /v1/quotes/{q}/rail` | Additive, best effort: check now for a direct `USDC.transfer` to E. Rate limited per client; at most one late-fund action per quote at a time, none for dust |
 | `ALL /v1/orders/{q}` | **x402 resource.** Unpaid: 402, byte-identical per quote. Draft: 425. Paid: 409. Expired or cancelled: 410. Paid request: replay (bound to the exact header) → verify (EIP-3009 only, payer = `from`) → checks (409 payer, 451 OFAC, 503 capacity, 410 expiry) → claim → settle → record → 200 §7 paid body |
 | `GET /v1/orders/{o}` | Order status and timeline. With the access token (`Authorization: Bearer …`, or `?token=`): `k_buyer` (private delivery) and private links. Studio orders with a change request carry `changes {requested_at, accept_by, revision, policy}` |
-| `GET /v1/orders?buyer=` | Public list: ids and statuses |
+| `GET /v1/orders?buyer=` | Public list: ids and statuses (additive: `watch_url`, `links` once the key is published) |
 | `POST /v1/auth/siwe/challenge`, `/verify` | EIP-4361 recovery. Returns orders with fresh `access_token` and `k_buyer` |
 | `POST /v1/reviews/{o}/challenge`, `/submit` | Studio review: EIP-712 `Decision` relayed via `decideBySig`, or an off-chain `ChangeRequest` |
 | `GET /v1/stats`, `/llms.txt`, `/openapi.json`, `/health` | Discovery and counters |
-| `GET /files/*` | Public immutable artifacts (when `FILES_BASE_URL` is not an R2 custom domain) |
+| `GET /files/*` | Public immutable artifacts (when `FILES_BASE_URL` is not an R2 custom domain). Single `Range` → 206 (iOS media). A browser navigating to `c/{mh}/manifest.json` (`Accept` has `text/html`, not `application/json`) gets a 302 to the order's `/w` page (else the quote's `/q` page), `Vary: Accept`; JSON clients always get the stored bytes |
+| `GET /w/{o}` | Watch & download page: reads the key from `factory.order` on two public Base RPCs, decrypts the KFC1 file in the browser, checks every hash, plays it and offers the MP4, plus a receipt. Private orders: `#t=<access_token>` and/or `#kb=<k_buyer>` in the fragment (never sent in a URL) |
+| `GET /q/{q}` | Watermarked preview page of a quote (price, deadline, escrow, how to buy, OG tags); only what `GET /v1/quotes/{q}` shows |
+| `GET /` | Front door: pitch, protection steps, live counters, what is orderable now, disclosures |
 | `/internal/*` | Bearer `WORKER_TOKEN`: the render worker and the Studio CLI (see below) |
 
 Refusals before settlement carry `"charged": false`. Once a settlement may have started, the paid path answers
