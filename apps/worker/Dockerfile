@@ -52,7 +52,7 @@ COPY --chown=node:node templates /app/templates
 # Build gate: node, ffmpeg encoders, browser, every template.json and its hash.
 RUN node src/cli.ts preflight > /dev/null
 
-VOLUME ["/work"]
+# /work is plain container storage (Railway rejects VOLUME); mount a volume there with `docker run -v` if wanted.
 EXPOSE 8790
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
   CMD ["node", "-e", "fetch('http://127.0.0.1:8790/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]

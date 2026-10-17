@@ -1,0 +1,8 @@
+# `railway up` uploads only what the render worker image needs (apps/worker/Dockerfile, build context = repo root).
+/*
+!/apps/
+/apps/*
+!/apps/worker/
+/apps/worker/node_modules/
+/apps/worker/.env
+!/templates/

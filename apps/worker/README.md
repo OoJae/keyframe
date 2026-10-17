@@ -94,6 +94,15 @@ without a mapper cannot be rendered from a job.
 
 ## Deploy
 
+### Railway (production since 2026-10-17)
+
+The same image runs 24/7 on Railway: project `keyframe-worker`, service `render-worker`. It is built from this
+Dockerfile with the repository root as context; the root `.railwayignore` limits the upload to `apps/worker` and
+`templates`, and never includes `.env` or `node_modules`. The service always restarts, is capped at 4 vCPU and
+4 GB, and has no public port, because the worker only calls the API outbound. Variables: `API_BASE`, `WORKER_ID=render-railway-1`,
+`BROWSER_GPU=off`, `POLL_INTERVAL_MS=3000`, `RENDER_LANES=1`, `RENDER_WORKERS=3`, `HEALTH_HOST=0.0.0.0`, and the secret
+`WORKER_TOKEN`, which is set with the CLI and never printed. Redeploy from the repository root with `railway up --service render-worker`.
+
 ### VPS (primary): Docker, linux/amd64
 
 ```sh
