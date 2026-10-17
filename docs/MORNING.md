@@ -7,19 +7,23 @@ secrets and the whole backend still can.
 
 | Area | State |
 |---|---|
-| Escrow contracts (`contracts/`) | 139+ tests, 640k-call invariants, 20 Base-fork tests (real USDC), 9/9 Halmos, 100% branch coverage. Independent audit: **no critical/high**; its medium/lows are fixed (keeper cursor, best-effort buyer push, 14-day review cap, 50% kill-fee cap). |
-| Plugin (`plugin/`) | 9 tools, starter conformance **passed**, 258 unit tests incl. anvil tests against the real factory. Adversarial review's 2 highs + 3 mediums + 4 lows fixed (payment tools now bound to `buyer` + `terms_hash`). |
-| x402 API (`apps/api/`) | Workers + D1 + KV + R2 + relayer DO + keeper cron. 122 tests. Security review's 2 highs + 6 mediums + 7 lows fixed. |
+| Escrow contracts (`contracts/`) | **186 tests** incl. 24 Base-fork tests (real USDC) + 19 audit regressions, 15/15 invariants, 100% branch coverage, Halmos 10/11. Independent audit: **no critical/high**; its findings are fixed (rotating keeper cursor, best-effort buyer push, 14-day review cap, 50% kill-fee cap). |
+| Plugin (`plugin/`) | 9 tools, starter conformance **passed**, **258** unit tests incl. anvil tests against the real factory. Adversarial review's 2 highs + 3 mediums + 4 lows fixed (payment tools now bound to `buyer` + `terms_hash`). Upload artifact: `plugin/dist/plugin.mjs`, sha256 `de79e90e…` (re-check with `scripts/deploy-mainnet.sh portal`). |
+| x402 API (`apps/api/`) | Workers + D1 + KV + R2 + relayer DO + keeper cron. **122** tests. Security review's 2 highs + 6 mediums + 7 lows fixed. Being patched now: Alchemy's free tier allows `eth_getLogs` over only 10 blocks, which broke direct-rail registration → dedicated logs RPC + chunked fallback. |
 | Render worker (`apps/worker/`) | HyperFrames → faststart MP4 → KFC1 encrypt. 63 tests; renders byte-identical; countdown ≈ 10 s on your Mac. |
-| End-to-end | **49/49 steps on a Base mainnet fork with real USDC**: quote → render → x402 pay → sealed → key published → plugin decrypts & verifies; direct rail; keeper + buyer refunds; Studio review; private delivery. Re-run: `scripts/e2e-fork.sh`. Evidence: `docs/evidence/INTEGRATION.md`. |
+| End-to-end | Base mainnet fork, real USDC: **47/48** after all security fixes (only the direct-rail step, fix in progress); earlier run 49/49. Covers quote → render → x402 pay → sealed → key published → plugin decrypts & verifies; keeper + buyer refunds; Studio review; private delivery; concurrent payments charged once. Re-run: `scripts/e2e-fork.sh`. Evidence: `docs/evidence/INTEGRATION.md`. |
+| Relayer / operator key | Created in `.env` → `0xc1AF1dd7c4816a40aB69578E52CCbB4ddBFFda04` (unfunded; `scripts/deploy-mainnet.sh relayer --fund 0.0015` tops it up from the deployer). |
 | Spike server | Live at `https://keyframe-spike.keyframe-spike-server.workers.dev` (deterministic v2 402, codeless payee verified on Base). |
 | Cloudflare | D1 `keyframe`, KV `KEYFRAME_KV`, R2 `keyframe-files` created (`docs/deploy/cloudflare-resources.md`). |
 
 ## What only you can do — in order
 
+0. **Plug the Mac in** (it was on battery at 08:34) and keep VS Code / this session open.
 1. **Studio payout wallet (B)** — 2 min. In the PayBox app create (or pick) an EVM wallet for studio revenue and add its
    address to `~/Desktop/paybox/.env` as `SELLER_ADDRESS=0x…`. Don't grant it to any agent. It is baked into the factory
-   forever (immutable), so pick one you'll keep. Then tell me "go" and I deploy factory + API + worker (≈20 min).
+   forever (immutable), so pick one you'll keep. Then tell me "go" and I run, in order:
+   `scripts/deploy-mainnet.sh plan` → `factory --broadcast` → `relayer --fund 0.0015` → `api` → `portal`, and start the
+   render worker on your Mac (≈20 min).
 2. **Buyer wallet (A)** — 5 min. An EVM PayBox wallet that is a *plain* account (avoid gasless swaps on it first), with
    ~**$15 USDC on Base** (+ ~$1 ETH on Base if you want to demo the direct rail). Connect the **PayBox connector in
    claude.ai** (Settings → Connectors → PayBox → Connect) and grant **only wallet A**.
