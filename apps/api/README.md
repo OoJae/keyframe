@@ -72,8 +72,10 @@ the same files the render worker loads (bundled at build time by `src/templates.
 template's status is `reference` or `production` and it declares styles. Otherwise `POST /v1/quotes` answers 422
 `format_unavailable`, naming the formats that are available now. Today that is `countdown` (style `tminus`), the
 hidden `probe`, and both Studio SKUs. `launch_sting`, `portfolio_pulse` and `kinetic_post` open automatically on the
-next deploy after the builder designs them. `chart_moment` also stays off via `FORMATS_DISABLED` until a
-market-data snapshot provider exists.
+next deploy after the builder designs them and removes them from `FORMATS_DISABLED` in wrangler.toml.
+`chart_moment` also needs a market-data snapshot provider. `/v1/styles` keeps listing them as "not available yet",
+and llms.txt marks them the same way. Options the schema accepts but nothing renders get an explicit 422
+`unsupported_option`: palette presets still `null` in `templates/_kit/palettes.json`, and `launch_sting` `logo_url`.
 
 ## Layout
 
@@ -119,7 +121,7 @@ Vars live in `wrangler.toml`, secrets in `wrangler secret put` (locally: `.dev.v
 | `WORKER_STALE_S` 120 (30–3600) | var | Render-studio liveness. With no render worker poll or Instant-job heartbeat for this long, Instant quotes answer 503 `studio_offline` (no quote row), `/v1/styles` marks Instant formats "studio offline" and `/health` `render.online` is false. Studio CLI calls never count. Last-seen is written at most every min(30, WORKER_STALE_S/4) s per worker (D1 row writes) |
 | `RELAYER_TX_PER_HOUR` 120 · `RELAYER_LOW_BALANCE_WEI` 5e14 | var | Relayer DO: non-fund transactions per clock hour (beyond it sends are refused and logged loudly; `fundWithAuthorization` is never refused) and the low-ETH alarm |
 | `OFAC_MAX_AGE_S` 7 d · `OFAC_REFRESH_S` 6 h · `OFAC_LIST_URL` | var | Sanctions list (0xB10C ETH list by default) |
-| `FORMATS_DISABLED` (`chart_moment`) · `POLICY_DENYLIST` · `QUOTES_PER_BUYER_PER_HOUR` 30 · `MAINTENANCE` | var | Product switches |
+| `FORMATS_DISABLED` (`chart_moment`; wrangler.toml: every Instant format without a designed template) · `POLICY_DENYLIST` · `QUOTES_PER_BUYER_PER_HOUR` 30 · `MAINTENANCE` | var | Product switches |
 | `KMASTER` | secret | ≥ 32 bytes hex. Derives K_chain and K_buyer per quote (§4). Rotating it orphans unreleased keys |
 | `RELAYER_PRIVATE_KEY` | secret | Hot operator key (= `T.operator`; the plugin's `KEYFRAME_OPERATORS`). Holds a little Base ETH only |
 | `WORKER_TOKEN` | secret | ≥ 32 chars. Bearer token for `/internal/*` |

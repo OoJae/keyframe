@@ -15,7 +15,7 @@ import {
   snapshotHash,
   ZERO32,
 } from "./build.js";
-import { checkPolicy } from "./policy.js";
+import { checkPolicy, unsupportedOption } from "./policy.js";
 import { parseQuoteRequest } from "./request.js";
 import { quoteView, termsOf } from "./view.js";
 
@@ -54,6 +54,8 @@ export async function createQuote(s: Services, body: unknown, client = "local"):
   }
   const plan = planQuote(req, cfg, now);
   if (!plan.ok) return planError(plan);
+  const unsupported = unsupportedOption(req);
+  if (unsupported) return error(422, { error: "unsupported_option", ...unsupported });
   if (plan.tier === "instant" && plan.deadlineMinutes * 60 < cfg.minReleaseMarginS) {
     return error(422, {
       error: "deadline_too_short",

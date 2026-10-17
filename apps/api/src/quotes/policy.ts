@@ -1,3 +1,4 @@
+import { DESIGNED_PALETTES } from "../templates.js";
 import type { QuoteRequest } from "./request.js";
 
 // Content policy for Instant/Studio requests (architecture.md §f threat 9, product-render-demo.md §B3).
@@ -256,4 +257,29 @@ export function checkPolicy(r: QuoteRequest, nowS: number, extraDenylist: readon
     }
   }
   return { ok: true };
+}
+
+/** Formats whose worker mapper fetches and renders params.logo_url (none yet). */
+const LOGO_FORMATS: ReadonlySet<string> = new Set<string>();
+
+export type Unsupported = { field: string; detail: string };
+
+/**
+ * Options the request schema accepts (the frozen plugin offers them) that nothing renders yet: an explicit 422
+ * instead of a silently ignored choice. Runs once the format is known to be sellable.
+ */
+export function unsupportedOption(
+  r: QuoteRequest,
+  designedPalettes: ReadonlySet<string> = DESIGNED_PALETTES,
+): Unsupported | null {
+  if (typeof r.palette === "string" && !designedPalettes.has(r.palette)) {
+    return {
+      field: "palette",
+      detail: `palette preset "${r.palette}" is not designed yet; omit palette to use the style's own colours, or pass {bg, fg, accent} as #RRGGBB`,
+    };
+  }
+  if (r.format === "launch_sting" && r.params.logo_url !== undefined && !LOGO_FORMATS.has(r.format)) {
+    return { field: "params.logo_url", detail: "launch_sting does not render logos yet; omit logo_url" };
+  }
+  return null;
 }

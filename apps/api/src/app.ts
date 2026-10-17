@@ -3,7 +3,7 @@ import * as z from "zod/v4";
 import { siweChallenge, siweVerify } from "./auth/siwe.js";
 import { CATALOG, type CatalogItem, formatUsdc } from "./catalog.js";
 import { publicConfig } from "./config.js";
-import { llmsTxt, openApi } from "./discovery.js";
+import { llmsTxt, openApi, POLICY_NOTES } from "./discovery.js";
 import { error, json, readBody, readJson, safeEqual } from "./http.js";
 import {
   ClaimBody,
@@ -130,6 +130,7 @@ function stylesView(s: Services, tier?: string, format?: string, studioOnline = 
         "Confirm brand rights and that no real person's likeness is requested (rights_confirmed: true).",
         "No links inside rendered text; logo_url must be https.",
         "Charts and portfolio values come from data, never from the model.",
+        ...POLICY_NOTES,
       ],
     },
   };

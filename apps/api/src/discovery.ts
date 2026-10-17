@@ -1,8 +1,20 @@
 import { CAIP2, MAX_AMOUNT, USDC } from "@keyframe/protocol";
 import { CATALOG, formatUsdc } from "./catalog.js";
 import type { Config } from "./config.js";
+import { PUBLIC_DELIVERY_NOTE, SILENT_NOTE } from "./quotes/view.js";
+import { DESIGNED_PALETTES } from "./templates.js";
 
 // Discovery documents for any agent or x402 client (not only the PayBox plugin).
+
+/** Plain-language notes shared by /v1/styles `policy.rules` and llms.txt. */
+export const POLICY_NOTES: readonly string[] = [
+  PUBLIC_DELIVERY_NOTE,
+  SILENT_NOTE,
+  DESIGNED_PALETTES.size === 0
+    ? "palette: omit it for the style's own colours, or pass {bg, fg, accent} as #RRGGBB; named presets are not designed yet."
+    : `palette: omit it, pass {bg, fg, accent} as #RRGGBB, or name a designed preset (${[...DESIGNED_PALETTES].join(", ")}).`,
+  "Quotes are free: each Instant quote renders a watermarked preview and nothing is charged until the order is paid, so you can show the user 2-3 looks (palettes or styles) and pay only for the one they pick.",
+];
 
 export function llmsTxt(cfg: Config): string {
   const formats = CATALOG.filter((i) => !i.hidden)
@@ -10,7 +22,8 @@ export function llmsTxt(cfg: Config): string {
       const prices = Object.entries(i.prices)
         .map(([d, p]) => `${d}s ${formatUsdc(p)} USDC`)
         .join(", ");
-      const off = cfg.formatsDisabled.has(i.id) ? " (not available yet)" : "";
+      // Orderable only when the template is designed (renderable) and the deployment has not switched it off.
+      const off = !i.renderable || cfg.formatsDisabled.has(i.id) ? " (not available yet)" : "";
       return `- ${i.id} (${i.tier}): ${i.title}. ${prices}.${off}`;
     })
     .join("\n");
@@ -46,6 +59,9 @@ studio is paid only on your explicit accept, and without one you are refunded af
 
 ## Formats
 ${formats}
+
+## Good to know
+${POLICY_NOTES.map((n) => `- ${n}`).join("\n")}
 
 ## Limits
 - Max order: ${formatUsdc(cfg.maxAmount < MAX_AMOUNT ? cfg.maxAmount : MAX_AMOUNT)} USDC. Contracts are unaudited.

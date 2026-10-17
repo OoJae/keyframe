@@ -84,9 +84,9 @@ RECEIPT_WAIT_MS = "1200"
 OFAC_MAX_AGE_S = "604800"
 OFAC_REFRESH_S = "21600"
 # Instant formats are sold only when templates/<id>/template.json is designed (status reference/production with
-# styles; bundled at build time, so redeploy after a template ships). chart_moment also needs the market-data
-# snapshot provider, which is not built yet.
-FORMATS_DISABLED = "chart_moment"
+# styles; bundled at build time, so redeploy after a template ships). This list switches formats off on top of
+# that: remove an id here when its template ships. chart_moment also needs the market-data snapshot provider.
+FORMATS_DISABLED = "chart_moment,launch_sting,portfolio_pulse,kinetic_post"
 QUOTES_PER_BUYER_PER_HOUR = "30"
 # Instant renders queued or running: in total, and per client (hashed IP). The worker claims round-robin by client.
 MAX_QUEUED_RENDERS = "50"
