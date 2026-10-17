@@ -80,6 +80,19 @@ export const DROP_CONFIRM_S = 60;
 const BALANCE_CHECK_S = 300;
 
 const GAS_BUFFER_BPS = 12_000n;
+/**
+ * Flat headroom on top of estimateGas. The deployed v1 factory (docs/deploy/factory-v1.md) swallows a payout push that
+ * runs out of gas more than one call deep (`gasleft() < gasBefore / 63`), so a limit that only just passes estimateGas
+ * could leave a buyer's share sitting in the escrow (sweepable, buyer-only) or let refundExpired skip entries. With
+ * this reserve every push is fully funded. Base charges for gas used, not the limit.
+ */
+const PUSH_RESERVE_GAS = 150_000n;
+
+/** Gas limit for a relayed factory call: the larger of estimate + 20% and estimate + PUSH_RESERVE_GAS. */
+export function gasLimitFor(estimate: bigint): bigint {
+  const buffered = (estimate * GAS_BUFFER_BPS) / 10_000n;
+  return buffered > estimate + PUSH_RESERVE_GAS ? buffered : estimate + PUSH_RESERVE_GAS;
+}
 // Node answers that mean "not accepted into the pool" (so nothing was broadcast).
 const DEFINITE_REJECTION =
   /nonce too (?:low|high)|underpriced|max fee per gas less than|intrinsic gas too low|insufficient funds|exceeds block gas limit|invalid sender/;
@@ -251,7 +264,7 @@ export class RelayerCore {
         data: req.data,
         value: 0n,
         nonce,
-        gas: (gas * GAS_BUFFER_BPS) / 10_000n,
+        gas: gasLimitFor(gas),
         maxFeePerGas: fees.maxFeePerGas,
         maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
       });
