@@ -36,3 +36,27 @@ matches, 1/1 chunk decrypted, file sha256 matches, MP4 header 1080x1920 8.0 s, m
   Manual mode went through.
 - The API recorded the release about a minute after it was mined (the relayer's wait window had passed; the next
   status read confirmed it).
+
+## Order 2: Countdown, $1, on the submitted plugin version (2026-10-17, evening)
+
+Plugin version `467117c8…`, bundle sha256 `8b7381d1c60f31bd6b72e1e5f552c36596ca75d4d7cf7dffd85be797b26d770b`, as shown
+on PayBox's own "accept and enable version" screen. Placed from a fresh Claude.ai chat.
+
+| Step | When (UTC) | Proof |
+|---|---|---|
+| Quote `q_W2ZHe5aUAGMZkaweXvzQtf`: "Demo night", 9:16, Oct 24 20:00 WAT; the reply carried the new motion-preview link | 20:20 | Claude.ai |
+| **SEALED**: `fundWithAuthorization` | 20:24:55, block 52,739,674 | [`0xaaa112…845c`](https://basescan.org/tx/0xaaa11264e75fe8651d04e35c5ebbbcceb94c628b54d319bc100b1bbcbfa2845c) |
+| **KEY PUBLISHED**: `release`, **2 s after funding** (next block; order 1 took 46 s before the post-payment retry) | 20:24:57, block 52,739,675 | [`0x0e1459…17a2`](https://basescan.org/tx/0x0e1459e9a665b37498004e32b211825d7b0d1468def66366fc92df9bfc1717a2) |
+| API records the release; `keyframe_status` prints `Watch & download: …/w/o_WCRTdaddycZ5G28K1BH4sB` | 20:25:44 | plugin text |
+
+- Order `o_WCRTdaddycZ5G28K1BH4sB`. `keyframe_verify` delivery: VERIFIED, 16/16. The watch page's decrypt code gives a
+  MATCH on plaintext sha256 `0xbd9c4456…09ed`.
+- The render was claimed by the Mac worker; the Railway worker covers when the Mac is off (tested at 20:00 with the
+  Mac stopped: final in 45 s).
+
+**Friction observed:**
+- Uploading a new plugin version leaves it "Available" but not enabled in the owner's account. It has to be
+  re-enabled under PayBox → Plugins → Unofficial ("Accept and enable version" shows the bundle sha256).
+- For about a minute after enabling, `use_plugin` answered "unavailable" without reaching Keyframe's API; a retry worked.
+- The PayBox signing card collapsed in the chat, as on order 1; asking Claude to reopen the signing window brought it back.
+
