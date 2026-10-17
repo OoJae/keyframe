@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import * as z from "zod/v4";
 import { siweChallenge, siweVerify } from "./auth/siwe.js";
-import { CATALOG, formatUsdc } from "./catalog.js";
+import { CATALOG, type CatalogItem, formatUsdc } from "./catalog.js";
 import { publicConfig } from "./config.js";
-import { llmsTxt, openApi } from "./discovery.js";
+import { llmsTxt, openApi, POLICY_NOTES } from "./discovery.js";
 import { error, json, readBody, readJson, safeEqual } from "./http.js";
 import {
   ClaimBody,
@@ -23,6 +23,7 @@ import {
   putStill,
 } from "./internal/jobs.js";
 import { keeperTick } from "./keeper.js";
+import { renderLiveness } from "./liveness.js";
 import { checkDirect } from "./orders/direct.js";
 import { type Background, orderResource } from "./orders/paid.js";
 import { getOrder, listOrders } from "./orders/status.js";
@@ -80,10 +81,17 @@ function withToken(value: unknown, req: Request): unknown {
   return v.access_token === undefined ? { ...v, access_token: bearer } : v;
 }
 
-function stylesView(s: Services, tier?: string, format?: string) {
+function stylesView(s: Services, tier?: string, format?: string, studioOnline = true) {
   const items = CATALOG.filter((i) => !i.hidden)
     .filter((i) => !tier || i.tier === tier)
     .filter((i) => !format || i.id === format);
+  // ≤30 chars (the plugin prints it): unsellable formats, and Instant ones while the render studio is offline.
+  const label = (i: CatalogItem) =>
+    !i.renderable || s.cfg.formatsDisabled.has(i.id)
+      ? "not available yet"
+      : i.tier === "instant" && !studioOnline
+        ? "studio offline"
+        : null;
   return {
     v: 1,
     source: "api",
@@ -110,8 +118,8 @@ function stylesView(s: Services, tier?: string, format?: string) {
       price_usdc: Object.fromEntries(Object.entries(i.prices).map(([d, p]) => [d, formatUsdc(p)])),
       eta_s: i.etaS,
       delivery_default: i.defaultDelivery,
-      available: i.renderable && !s.cfg.formatsDisabled.has(i.id),
-      ...(i.renderable && !s.cfg.formatsDisabled.has(i.id) ? {} : { availability: "not available yet" }),
+      available: label(i) === null,
+      ...(label(i) === null ? {} : { availability: label(i) }),
       what: i.description,
       params: i.params,
     })),
@@ -120,8 +128,9 @@ function stylesView(s: Services, tier?: string, format?: string) {
       rules: [
         "Typed fields only; no free-text prompts. Omit optional fields rather than inventing names, colours or numbers.",
         "Confirm brand rights and that no real person's likeness is requested (rights_confirmed: true).",
-        "No links inside rendered text; logo_url must be https.",
+        "No links inside rendered text; a name field may be an ENS/Basename (name.eth) or the brand's own domain alone. logo_url must be https.",
         "Charts and portfolio values come from data, never from the model.",
+        ...POLICY_NOTES,
       ],
     },
   };
@@ -149,12 +158,11 @@ export function createApp(hooks: AppHooks) {
 
   app.get("/health", async (c) => {
     const s = c.var.services;
-    const [sanctions, workerSeen, queue] = await Promise.all([
+    const [sanctions, render, queue] = await Promise.all([
       s.sanctions.status(),
-      s.repo.lastWorkerSeen(),
+      renderLiveness(s),
       s.repo.queueDepth(),
     ]);
-    const now = nowS(s);
     return json(200, {
       ok: s.cfg.problems.length === 0 && sanctions.fresh,
       version: VERSION,
@@ -162,7 +170,13 @@ export function createApp(hooks: AppHooks) {
       storage: s.storage.kind,
       chain: s.chain !== null,
       sanctions,
-      render: { last_worker_seen_s: workerSeen === null ? null : now - workerSeen, queue },
+      // last-seen is recorded at most every touchIntervalS (≤30 s), so a polling worker reads 0–30 s here
+      render: {
+        last_worker_seen_s: render.lastSeenAgoS,
+        queue,
+        online: render.online,
+        stale_after_s: s.cfg.workerStaleS,
+      },
     });
   });
 
@@ -174,7 +188,10 @@ export function createApp(hooks: AppHooks) {
   );
   app.get("/openapi.json", (c) => json(200, openApi(c.var.services.cfg), { "Cache-Control": "public, max-age=300" }));
 
-  app.get("/v1/styles", (c) => json(200, stylesView(c.var.services, c.req.query("tier"), c.req.query("format"))));
+  app.get("/v1/styles", async (c) => {
+    const online = (await renderLiveness(c.var.services)).online;
+    return json(200, stylesView(c.var.services, c.req.query("tier"), c.req.query("format"), online));
+  });
   app.get("/v1/stats", async (c) =>
     json(200, { v: 1, ...(await c.var.services.repo.stats()), as_of: nowS(c.var.services) }),
   );

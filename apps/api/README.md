@@ -13,7 +13,7 @@ decisions are in ADR-002, 003, 012, 014, 015 and 019 (security hardening) in `do
 | Route | What |
 |---|---|
 | `GET /v1/styles?tier&format` | Catalog: formats, styles, aspects, prices per duration, ETA, params, policy |
-| `POST /v1/quotes` | Body = `keyframe_quote` input (product-render-demo §A3). Per-client rate limit → validation → content policy → per-buyer rate limit → OFAC → render-queue caps (per client and total) → keys (§4) → spec (§6) → Terms (§1). Instant: `draft` plus a render job. Studio: `final` |
+| `POST /v1/quotes` | Body = `keyframe_quote` input (product-render-demo §A3). Per-client rate limit → validation → content policy → format availability → unsupported options (422 `unsupported_option`) → per-buyer rate limit → OFAC → Instant: render studio online (else 503 `studio_offline`, no quote) and render-queue caps (per client and total) → keys (§4) → spec (§6) → Terms (§1). Instant: `draft` plus a render job. Studio: `final` |
 | `GET /v1/quotes/{q}` | §7 quote object (`draft → final`, `paid`, `expired`, `cancelled`). Additive: `payable`, `terms_final`; drafts also carry `escrow_status: "provisional_do_not_pay"` and a `notice` (their escrow and terms change when the quote turns final) |
 | `POST /v1/quotes/{q}/rail` | Additive, best effort: check now for a direct `USDC.transfer` to E. Rate limited per client; at most one late-fund action per quote at a time, none for dust |
 | `ALL /v1/orders/{q}` | **x402 resource.** Unpaid: 402, byte-identical per quote. Draft: 425. Paid: 409. Expired or cancelled: 410. Paid request: replay (bound to the exact header) → verify (EIP-3009 only, payer = `from`) → checks (409 payer, 451 OFAC, 503 capacity, 410 expiry) → claim → settle → record → 200 §7 paid body |
@@ -72,8 +72,10 @@ the same files the render worker loads (bundled at build time by `src/templates.
 template's status is `reference` or `production` and it declares styles. Otherwise `POST /v1/quotes` answers 422
 `format_unavailable`, naming the formats that are available now. Today that is `countdown` (style `tminus`), the
 hidden `probe`, and both Studio SKUs. `launch_sting`, `portfolio_pulse` and `kinetic_post` open automatically on the
-next deploy after the builder designs them. `chart_moment` also stays off via `FORMATS_DISABLED` until a
-market-data snapshot provider exists.
+next deploy after the builder designs them and removes them from `FORMATS_DISABLED` in wrangler.toml.
+`chart_moment` also needs a market-data snapshot provider. `/v1/styles` keeps listing them as "not available yet",
+and llms.txt marks them the same way. Options the schema accepts but nothing renders get an explicit 422
+`unsupported_option`: palette presets still `null` in `templates/_kit/palettes.json`, and `launch_sting` `logo_url`.
 
 ## Layout
 
@@ -88,6 +90,7 @@ src/orders/              paid path, settlement bookkeeping + orphan adoption (se
 src/ratelimit.ts         per-client D1 token buckets (+ optional Cloudflare Rate Limiting binding)
 src/redact.ts            error text without RPC URLs, request bodies or key-like tokens
 src/internal/jobs.ts     render-worker and Studio delivery API
+src/liveness.ts          render-studio liveness (throttled last-seen; studio_offline gate, /v1/styles, /health)
 src/delivery/            K_file derivation, artifact validation and self-verification (KFC1)
 src/relayer/             RelayerCore (nonces, simulate-then-send, raw-tx store, reconciliation) + Durable Object
 src/chain.ts             read-only viem client (+ read-only signer for the x402 verifier)
@@ -115,9 +118,10 @@ Vars live in `wrangler.toml`, secrets in `wrangler secret put` (locally: `.dev.v
 | `QUOTE_TTL_S` 600 · `DRAFT_TTL_S` 900 · `MIN_RELEASE_MARGIN_S` 300 (≥ 180) · `RECEIPT_WAIT_MS` 1200 | var | Timing. Instant `deadline_minutes × 60` must be ≥ `MIN_RELEASE_MARGIN_S` |
 | `STUDIO_REVIEW_S` 86400 (≤ 7 d) · `STUDIO_KILL_FEE_BPS` 0 (≤ 5000) · `STUDIO_MAX_OPEN` 3 · `MAX_INFLIGHT_ORDERS` 20 | var | Studio terms and capacity gate. A kill fee above 5000 is a configuration problem (the factory refuses it) |
 | `MAX_QUEUED_RENDERS` 50 · `MAX_QUEUED_RENDERS_PER_CLIENT` 3 · `RATE_LIMITS` (`off` disables) | var | Render-queue caps (per hashed client IP) and the D1 token buckets |
+| `WORKER_STALE_S` 120 (30–3600) | var | Render-studio liveness. With no render worker poll or Instant-job heartbeat for this long, Instant quotes answer 503 `studio_offline` (no quote row), `/v1/styles` marks Instant formats "studio offline" and `/health` `render.online` is false. Studio CLI calls never count. Last-seen is written at most every min(30, WORKER_STALE_S/4) s per worker (D1 row writes) |
 | `RELAYER_TX_PER_HOUR` 120 · `RELAYER_LOW_BALANCE_WEI` 5e14 | var | Relayer DO: non-fund transactions per clock hour (beyond it sends are refused and logged loudly; `fundWithAuthorization` is never refused) and the low-ETH alarm |
 | `OFAC_MAX_AGE_S` 7 d · `OFAC_REFRESH_S` 6 h · `OFAC_LIST_URL` | var | Sanctions list (0xB10C ETH list by default) |
-| `FORMATS_DISABLED` (`chart_moment`) · `POLICY_DENYLIST` · `QUOTES_PER_BUYER_PER_HOUR` 30 · `MAINTENANCE` | var | Product switches |
+| `FORMATS_DISABLED` (`chart_moment`; wrangler.toml: every Instant format without a designed template) · `POLICY_DENYLIST` · `QUOTES_PER_BUYER_PER_HOUR` 30 · `MAINTENANCE` | var | Product switches |
 | `KMASTER` | secret | ≥ 32 bytes hex. Derives K_chain and K_buyer per quote (§4). Rotating it orphans unreleased keys |
 | `RELAYER_PRIVATE_KEY` | secret | Hot operator key (= `T.operator`; the plugin's `KEYFRAME_OPERATORS`). Holds a little Base ETH only |
 | `WORKER_TOKEN` | secret | ≥ 32 chars. Bearer token for `/internal/*` |
@@ -250,9 +254,11 @@ verification.md §7.3.
 - Funds can only move to `T.buyer` or `T.seller` (contract invariant I1). The API's worst case is a delay, never
   a redirect.
 - Content policy (`src/quotes/policy.ts`) runs before quoting, on NFKC-normalised text with invisible characters
-  removed and Cyrillic/Greek lookalikes and leetspeak folded, including spelled-out words ("n.a.z.i") and every
-  nested string of catalog values and portfolio data; bare domains count as links. Studio briefs also get human
-  review.
+  removed and Cyrillic/Greek lookalikes and leetspeak folded, including spelled-out words ("n.a.z.i"), every
+  nested string of catalog values, and the printable fields (symbols, names) of a verbatim `get_portfolio`
+  result. Bare domains count as links, except in name fields (wordmark, label, title, handle, byline): an
+  ENS/Basename/SNS name ("jesse.base.eth") or a value that is exactly the brand's own ASCII domain ("pump.fun") is a
+  name. Studio briefs may name sites (never rendered; URLs go in `references`) and also get human review.
 - Hardening from the 2026-10 review (ADR-019): replay bound to the exact payment header and short-lived; Permit2 /
   mixed payloads refused and the verifier's payer must equal the authorization's `from`; settlement owned by
   `waitUntil` with keeper adoption of orphans; "dropped" only after a consistent read and a confirmation delay, and

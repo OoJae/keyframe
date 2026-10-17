@@ -20,7 +20,16 @@ import { describe, expect, it } from "vitest";
 import { CATALOG, catalogItem } from "../src/catalog.js";
 import { rawFileKey } from "../src/delivery/keys.js";
 import { TEMPLATES } from "../src/templates.js";
-import { encryptWithRawKey, FACTORY, fixture, Harness, type Json, SANCTIONED, SELLER } from "./support/harness.js";
+import {
+  encryptWithRawKey,
+  FACTORY,
+  fixture,
+  Harness,
+  type Json,
+  SANCTIONED,
+  SELLER,
+  WORKER_TOKEN,
+} from "./support/harness.js";
 
 const kmasterOf = (h: Harness) => hexToBytes(h.kmasterHex);
 
@@ -386,5 +395,154 @@ describe("render-before-pay: draft → final", () => {
       body: JSON.stringify({ worker_id: "worker-1" }),
     });
     expect(claim.status).toBe(204);
+  });
+});
+
+describe("render studio liveness (studio_offline)", () => {
+  const claim = (h: Harness, workerId: string, kinds?: string[]) =>
+    h.internal("/jobs/claim", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ worker_id: workerId, ...(kinds ? { kinds } : {}) }),
+    });
+  const seenAt = (h: Harness, workerId: string) =>
+    h.db.query<{ seen_at: number }>("SELECT seen_at FROM worker_heartbeats WHERE worker_id = ?", workerId)[0]
+      ?.seen_at ?? null;
+  const instant = (h: Harness) => h.postJson("/v1/quotes", h.quoteBody());
+  const STUDIO_BRIEF = { deliverable: "studio_sting", brief: "A confident ten second sting for a parachute brand." };
+
+  it("no render worker ever seen: Instant quotes answer 503 studio_offline with no quote row and no job", async () => {
+    const h = new Harness();
+    h.stopRenderWorker();
+    const res = await instant(h);
+    expect(res.status).toBe(503);
+    expect(res.headers.get("retry-after")).toBe("300");
+    const e = await res.json();
+    expect(e).toMatchObject({ error: "studio_offline", processed: false });
+    // the plugin relays `message` (≤240 chars) to the user
+    expect(e.message).toBe(
+      "Keyframe's render studio is offline right now; nothing was charged. Studio (hand-made) commissions are still open.",
+    );
+    expect(e.message.length).toBeLessThanOrEqual(240);
+    expect(h.db.query("SELECT id FROM quotes")).toHaveLength(0);
+    expect(h.db.query("SELECT id FROM jobs")).toHaveLength(0);
+  });
+
+  it("a stale worker (> WORKER_STALE_S) refuses Instant quotes; its next poll brings drafts back", async () => {
+    const h = new Harness();
+    h.stopRenderWorker();
+    expect((await claim(h, "mac-1")).status).toBe(204); // idle poll: seen now
+    h.advance(120);
+    expect((await instant(h)).status).toBe(201); // exactly WORKER_STALE_S old is still fresh
+    h.advance(1);
+    expect((await instant(h)).status).toBe(503);
+    expect(h.db.query("SELECT id FROM quotes")).toHaveLength(1);
+    await claim(h, "mac-1");
+    const res = await instant(h);
+    expect(res.status).toBe(201);
+    expect((await res.json()).status).toBe("draft");
+  });
+
+  it("WORKER_STALE_S is configurable", async () => {
+    const h = new Harness({ env: { WORKER_STALE_S: "300" } });
+    h.stopRenderWorker();
+    await claim(h, "mac-1");
+    h.advance(299);
+    expect((await instant(h)).status).toBe(201);
+    h.advance(2);
+    expect((await instant(h)).status).toBe(503);
+  });
+
+  it("Studio quotes are unaffected while the render studio is offline", async () => {
+    const h = new Harness();
+    h.stopRenderWorker();
+    const q = await h.createQuote({ format: "studio", params: STUDIO_BRIEF });
+    expect(q).toMatchObject({ status: "final", tier: "studio" });
+  });
+
+  it("validation errors still come first (422 before 503)", async () => {
+    const h = new Harness();
+    h.stopRenderWorker();
+    const lowContrast = { bg: "#000000", fg: "#111111", accent: "#ff4f00" };
+    expect((await h.postJson("/v1/quotes", h.quoteBody({ palette: lowContrast }))).status).toBe(422);
+    expect((await h.postJson("/v1/quotes", h.quoteBody({ format: "chart_moment" }))).status).toBe(400);
+  });
+
+  it("a Studio CLI delivery (open, heartbeat) or a studio-only claim never marks the render studio alive", async () => {
+    const h = new Harness();
+    h.stopRenderWorker();
+    const q = await h.createQuote({ format: "studio", params: STUDIO_BRIEF });
+    const paid = await (await h.pay(q.quote_id, await h.paymentHeaders(q.quote_id))).json();
+    await h.drain();
+    const open = await h.internal(`/studio/orders/${paid.order_id}/delivery`, { method: "POST" });
+    expect(open.status).toBe(200);
+    const job = (await open.json()) as Json;
+    const hb = await h.internal(job.upload.heartbeat, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ progress: 40 }),
+    });
+    expect(hb.status).toBe(200);
+    expect((await claim(h, "studio-cli", ["studio_delivery"])).status).toBe(204);
+    expect(h.db.query("SELECT worker_id FROM worker_heartbeats")).toEqual([]);
+    expect((await instant(h)).status).toBe(503);
+    const health = await (await h.request("/health")).json();
+    expect(health.render).toMatchObject({ online: false, last_worker_seen_s: null });
+  });
+
+  it("an Instant render's job heartbeats keep a busy worker (not polling) online", async () => {
+    const h = new Harness();
+    await h.createQuote();
+    h.stopRenderWorker();
+    const c = await claim(h, "mac-1");
+    expect(c.status).toBe(200);
+    const job = (await c.json()) as Json;
+    const beat = () =>
+      h.request(job.upload.heartbeat, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${WORKER_TOKEN}`,
+          "x-worker-id": "mac-1",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ progress: 50 }),
+      });
+    h.advance(100);
+    expect((await beat()).status).toBe(200);
+    h.advance(100); // 200 s since the last poll, 100 s since the heartbeat
+    expect((await instant(h)).status).toBe(201);
+  });
+
+  it("writes a worker's last-seen at most once per 30 s while liveness stays fresh", async () => {
+    const h = new Harness();
+    h.stopRenderWorker();
+    const t0 = h.nowS();
+    await claim(h, "mac-1");
+    expect(seenAt(h, "mac-1")).toBe(t0);
+    // an idle worker polls every ~2 s: no row rewrite inside the window
+    for (let i = 0; i < 14; i++) {
+      h.advance(2);
+      expect((await claim(h, "mac-1")).status).toBe(204);
+    }
+    expect(seenAt(h, "mac-1")).toBe(t0);
+    expect((await instant(h)).status).toBe(201);
+    h.advance(2); // 30 s after the last write
+    await claim(h, "mac-1");
+    expect(seenAt(h, "mac-1")).toBe(t0 + 30);
+    // a second worker gets its own row; /health reads the freshest
+    await claim(h, "vps-1");
+    expect(seenAt(h, "vps-1")).toBe(t0 + 30);
+    h.advance(10);
+    const health = await (await h.request("/health")).json();
+    expect(health.render).toMatchObject({ online: true, last_worker_seen_s: 10, stale_after_s: 120 });
+  });
+
+  it("repo.touchWorker rewrites a row at most once per interval and reports whether it wrote", async () => {
+    const h = new Harness();
+    expect(await h.repo.touchWorker("w", 1000, 30)).toBe(true);
+    expect(await h.repo.touchWorker("w", 1029, 30)).toBe(false);
+    expect(await h.repo.touchWorker("w", 1030, 30)).toBe(true);
+    expect(await h.repo.touchWorker("w", 1031)).toBe(true); // interval 0: every call writes
+    expect(seenAt(h, "w")).toBe(1031);
   });
 });

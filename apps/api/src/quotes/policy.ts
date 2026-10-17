@@ -1,9 +1,11 @@
+import { DESIGNED_PALETTES } from "../templates.js";
 import type { QuoteRequest } from "./request.js";
 
 // Content policy for Instant/Studio requests (architecture.md §f threat 9, product-render-demo.md §B3).
 // Instant formats take typed text only (no likeness inputs); this layer rejects disallowed text, links smuggled
 // into rendered text, spoofing characters, unsafe URLs and unreadable palettes. Studio briefs get the same text
-// checks and are then reviewed by the human designer before acceptance.
+// checks (bare domains allowed: the brief is read by the human designer, never rendered) and are then reviewed by
+// the designer before acceptance.
 
 export type PolicyResult = { ok: true } | { ok: false; reason: string; field: string };
 
@@ -33,6 +35,32 @@ const URL_IN_TEXT = /\bhttps?:\/\/|\bwww\.|\b[a-z0-9-]+\.(?:com|io|xyz|app|net|o
 /** Any host-like token (label.tld, also bare "drainer.com", "x.co/claim", "@a.b", "xn--…"): no links in renders. */
 const DOMAIN_IN_TEXT =
   /(?:^|[^\p{L}\p{N}-])(?:[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,61}[\p{L}\p{N}])?\.)+(?:\p{L}{2,24}|xn--[a-z0-9-]{1,59})(?=$|[^\p{L}\p{N}-])/iu;
+/**
+ * Name-service names (ENS incl. Basenames: "ripcord.eth", "jesse.base.eth"; SNS: "dao.sol") and framework names
+ * ("Next.js") are how crypto-native buyers name themselves, not web links. In name fields they are masked before
+ * DOMAIN_IN_TEXT runs. A gateway host ("vitalik.eth.limo") or a path ("x.eth/claim") is still a link.
+ */
+const NAME_TOKEN =
+  /(^|[^\p{L}\p{N}.-])((?:[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,61}[\p{L}\p{N}])?\.)+(?:eth|sol|js))(?=$|[^\p{L}\p{N}./-]|\.(?:$|\s))/giu;
+/**
+ * A name field that is exactly one plain ASCII host name ("pump.fun", "keyframe.xyz") is the brand's own name. With
+ * other words around it ("claim at drainer.com"), lookalike dots or a path, it is still a link.
+ */
+const WHOLE_HOST_NAME =
+  /^(?!xn--)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.(?!xn--)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.[a-z]{2,24}$/i;
+/** Fields that name the buyer's own brand, project or handle (where a NAME_TOKEN is not a link). */
+const NAME_FIELDS: ReadonlySet<string> = new Set([
+  "params.wordmark",
+  "params.label",
+  "params.title",
+  "params.handle",
+  "params.byline",
+]);
+/**
+ * get_portfolio keys whose values a portfolio card may print (token symbols and names). The rest of the verbatim
+ * result (logo and explorer URLs, addresses, chain ids) is data no template renders, so it is not scanned.
+ */
+const RENDERED_PORTFOLIO_KEY = /^(?:(?:token|asset|display)_?)?(?:symbol|name|ticker|title|label)$/i;
 
 // Lookalikes folded to Latin before the denylist runs (Cyrillic / Greek letters that render like a-z).
 const CONFUSABLES: Record<string, string> = {
@@ -145,7 +173,6 @@ export function contrastRatio(a: string, b: string): number {
   return (hi + 0.05) / (lo + 0.05);
 }
 
-/** Text fields that end up rendered (or read by a human designer), with their request paths. */
 /** Every string leaf (and key) of a JSON value, with its path; bounded so a hostile value cannot blow up. */
 function jsonStrings(path: string, v: unknown, out: [string, string][], depth = 0): void {
   if (out.length > 2_000 || depth > 16) return;
@@ -160,6 +187,21 @@ function jsonStrings(path: string, v: unknown, out: [string, string][], depth = 
   }
 }
 
+/** The string leaves of a verbatim get_portfolio result that a card may print (RENDERED_PORTFOLIO_KEY), bounded. */
+function portfolioStrings(path: string, v: unknown, out: [string, string][], key = "", depth = 0): void {
+  if (out.length > 2_000 || depth > 16) return;
+  if (typeof v === "string") {
+    if (RENDERED_PORTFOLIO_KEY.test(key)) out.push([path, v]);
+  } else if (Array.isArray(v)) {
+    for (const [i, x] of v.entries()) portfolioStrings(`${path}.${i}`, x, out, key, depth + 1);
+  } else if (v && typeof v === "object") {
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+      portfolioStrings(`${path}.${k}`, x, out, k, depth + 1);
+    }
+  }
+}
+
+/** Text fields that end up rendered (or read by a human designer), with their request paths. */
 function textFields(r: QuoteRequest): [string, string][] {
   const out: [string, string][] = [];
   const add = (path: string, v: string | undefined) => {
@@ -182,7 +224,7 @@ function textFields(r: QuoteRequest): [string, string][] {
       r.params.holdings?.forEach((h, i) => {
         add(`params.holdings.${i}.symbol`, h.symbol);
       });
-      if (r.params.portfolio !== undefined) jsonStrings("params.portfolio", r.params.portfolio, out);
+      if (r.params.portfolio !== undefined) portfolioStrings("params.portfolio", r.params.portfolio, out);
       break;
     case "kinetic_post":
       add("params.text", r.params.text);
@@ -225,9 +267,17 @@ export function checkPolicy(r: QuoteRequest, nowS: number, extraDenylist: readon
     if (deny.test(value) || deny.test(folded) || deny.test(collapseSpelled(folded))) {
       return { ok: false, reason: "disallowed_content", field };
     }
-    // Studio briefs may cite links in `references`; nowhere else may text carry a URL into a render.
+    // Studio briefs may cite links in `references` and name sites (the brief is never rendered); no other text may
+    // carry a link into a render. In name fields, name-service names and a brand that is its domain are names.
     const plain = value.normalize("NFKC").replace(INVISIBLE, "");
-    if (URL_IN_TEXT.test(plain) || DOMAIN_IN_TEXT.test(plain)) {
+    if (field === "params.brief") {
+      if (URL_IN_TEXT.test(plain)) return { ok: false, reason: "put_links_in_references", field };
+      continue;
+    }
+    const name = NAME_FIELDS.has(field);
+    if (name && WHOLE_HOST_NAME.test(value.trim()) && !/^www\./i.test(value.trim())) continue;
+    const scanned = name ? plain.replace(NAME_TOKEN, "$1name") : plain;
+    if (URL_IN_TEXT.test(plain) || DOMAIN_IN_TEXT.test(scanned)) {
       return { ok: false, reason: "links_not_allowed_in_text", field };
     }
   }
@@ -256,4 +306,29 @@ export function checkPolicy(r: QuoteRequest, nowS: number, extraDenylist: readon
     }
   }
   return { ok: true };
+}
+
+/** Formats whose worker mapper fetches and renders params.logo_url (none yet). */
+const LOGO_FORMATS: ReadonlySet<string> = new Set<string>();
+
+export type Unsupported = { field: string; detail: string };
+
+/**
+ * Options the request schema accepts (the frozen plugin offers them) that nothing renders yet: an explicit 422
+ * instead of a silently ignored choice. Runs once the format is known to be sellable.
+ */
+export function unsupportedOption(
+  r: QuoteRequest,
+  designedPalettes: ReadonlySet<string> = DESIGNED_PALETTES,
+): Unsupported | null {
+  if (typeof r.palette === "string" && !designedPalettes.has(r.palette)) {
+    return {
+      field: "palette",
+      detail: `palette preset "${r.palette}" is not designed yet; omit palette to use the style's own colours, or pass {bg, fg, accent} as #RRGGBB`,
+    };
+  }
+  if (r.format === "launch_sting" && r.params.logo_url !== undefined && !LOGO_FORMATS.has(r.format)) {
+    return { field: "params.logo_url", detail: "launch_sting does not render logos yet; omit logo_url" };
+  }
+  return null;
 }

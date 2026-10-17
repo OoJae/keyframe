@@ -764,14 +764,21 @@ export class Repo {
 
   // ---------------------------------------------------------------- workers
 
-  async touchWorker(workerId: string, now: number): Promise<void> {
-    await this.db
+  /**
+   * Records a render worker's last-seen time, rewriting an existing row only once it is `minIntervalS` old: an idle
+   * worker polls every ~2 s, and D1 bills (and on the free plan caps) row writes, not the no-op conditional update.
+   * Returns whether a row was written.
+   */
+  async touchWorker(workerId: string, now: number, minIntervalS = 0): Promise<boolean> {
+    const r = await this.db
       .prepare(
         `INSERT INTO worker_heartbeats (worker_id, seen_at) VALUES (?, ?)
-         ON CONFLICT (worker_id) DO UPDATE SET seen_at = excluded.seen_at`,
+         ON CONFLICT (worker_id) DO UPDATE SET seen_at = excluded.seen_at
+         WHERE worker_heartbeats.seen_at <= excluded.seen_at - ?`,
       )
-      .bind(workerId, now)
+      .bind(workerId, now, minIntervalS)
       .run();
+    return r.meta.changes === 1;
   }
 
   async lastWorkerSeen(): Promise<number | null> {

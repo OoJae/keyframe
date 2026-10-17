@@ -9,11 +9,17 @@ import type { ChargeableQuote } from "../x402/server.js";
 // The §7 quote object (fields the plugin relies on) plus additive fields. Settling is reported as "final":
 // the buyer-visible state only changes to "paid" once settlement succeeded.
 
+export const PUBLIC_DELIVERY_NOTE =
+  'Public delivery: once the key is published on Base, anyone with the link can open the file. Choose delivery "private" for unannounced launches.';
+export const SILENT_NOTE = "Instant pieces are silent (no sound) until studio sound ships.";
+
 export const DISCLOSURES: readonly string[] = [
   "Pay-on-delivery escrow: the USDC waits at the escrow address and can reach the studio only when the key to your file is published on Base before the deadline; otherwise it can only return to the buyer.",
   "We guarantee you get the file you approved, on time, or your money back. We can't guarantee you'll love it; that's why you see the key frame before you pay.",
   "Unaudited contracts; every order is capped at 50 USDC.",
   "Templates are hand-designed by Keyframe's designer; agents only fill typed fields.",
+  PUBLIC_DELIVERY_NOTE,
+  SILENT_NOTE,
 ];
 
 export const DRAFT_RETRY_MS = 3000;

@@ -1,5 +1,7 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { catalogItem } from "../src/catalog.js";
+import { CATALOG, catalogItem } from "../src/catalog.js";
 import { parseConfig } from "../src/config.js";
 import { Harness, WORKER_TOKEN } from "./support/harness.js";
 
@@ -59,6 +61,79 @@ describe("public surface", () => {
     const oa = await (await h.request("/openapi.json")).json();
     expect(oa.openapi).toBe("3.1.0");
     expect(Object.keys(oa.paths)).toContain("/v1/orders/{quote_id}");
+  });
+
+  it("/v1/styles and /health say when the render studio is offline (Instant only)", async () => {
+    const h = new Harness();
+    h.stopRenderWorker();
+    const styles = async () => {
+      const all = await (await h.request("/v1/styles")).json();
+      return (id: string) => all.formats.find((f: { id: string }) => f.id === id);
+    };
+    let byId = await styles();
+    expect(byId("countdown")).toMatchObject({ available: false, availability: "studio offline" });
+    expect(byId("studio_sting").available).toBe(true);
+    expect(byId("studio_sting").availability).toBeUndefined();
+    expect(byId("launch_sting").availability).toBe("not available yet");
+    for (const id of ["launch_sting", "countdown", "portfolio_pulse", "kinetic_post", "chart_moment"]) {
+      expect(byId(id).availability.length, id).toBeLessThanOrEqual(30); // the plugin prints ≤30 chars
+    }
+    expect((await (await h.request("/health")).json()).render).toMatchObject({
+      online: false,
+      last_worker_seen_s: null,
+      queue: 0,
+    });
+    // the render worker polls once
+    await h.internal("/jobs/claim", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ worker_id: "mac-1" }),
+    });
+    byId = await styles();
+    expect(byId("countdown").available).toBe(true);
+    expect(byId("countdown").availability).toBeUndefined();
+    expect((await (await h.request("/health")).json()).render).toMatchObject({ online: true, last_worker_seen_s: 0 });
+    h.advance(121);
+    expect((await styles())("countdown").availability).toBe("studio offline");
+  });
+
+  it("llms.txt marks formats whose template is not designed as not available, even with FORMATS_DISABLED empty", async () => {
+    const h = new Harness({ env: { FORMATS_DISABLED: "" } });
+    const llms = await (await h.request("/llms.txt")).text();
+    for (const i of CATALOG.filter((x) => !x.hidden)) {
+      const line = llms.split("\n").find((l) => l.startsWith(`- ${i.id} (`));
+      expect(line, i.id).toBeDefined();
+      expect(line?.endsWith("(not available yet)"), i.id).toBe(!i.renderable);
+    }
+    expect(llms).toMatch(/- countdown \(instant\): Countdown\. 8s 1\.00 USDC\.$/m);
+    expect(llms).toContain("503 studio_offline");
+  });
+
+  it("the shipped wrangler.toml switches off every Instant format without a designed template", () => {
+    const toml = readFileSync(join(import.meta.dirname, "../wrangler.toml"), "utf8");
+    const disabled = parseConfig({ FORMATS_DISABLED: /^FORMATS_DISABLED = "(.*)"$/m.exec(toml)?.[1] }).formatsDisabled;
+    expect([...disabled].sort()).toEqual(["chart_moment", "kinetic_post", "launch_sting", "portfolio_pulse"]);
+    expect(toml).toMatch(/^WORKER_STALE_S = "120"$/m);
+  });
+
+  it("disclosures: public delivery is openable by anyone with the link, pieces are silent, quotes are free", async () => {
+    const h = new Harness();
+    const q = await h.createQuote();
+    const publicLine = q.disclosures.find((d: string) => d.startsWith("Public delivery:"));
+    expect(publicLine).toContain("anyone with the link can open the file");
+    expect(publicLine).toContain('delivery "private"');
+    expect(q.disclosures).toContain("Instant pieces are silent (no sound) until studio sound ships.");
+    expect(q.disclosures.length).toBeLessThanOrEqual(12); // the plugin keeps 12
+    for (const d of q.disclosures) expect(d.length).toBeLessThanOrEqual(500);
+    const rules: string[] = (await (await h.request("/v1/styles")).json()).policy.rules;
+    const llms = await (await h.request("/llms.txt")).text();
+    for (const text of [publicLine, "Instant pieces are silent", "Quotes are free", "named presets are not designed"]) {
+      expect(
+        rules.some((r) => r.includes(text)),
+        text,
+      ).toBe(true);
+      expect(llms, text).toContain(text);
+    }
   });
 
   it("/internal/* requires the worker bearer token; job calls require the holder's X-Worker-Id", async () => {
