@@ -29,3 +29,4 @@ renders/
 .playwright-mcp/
 # e2e fork runs (scripts/e2e-fork.sh): logs, reports, local state; secrets are deleted at the end of a run
 .e2e/
+apps/api/wrangler.production.toml
