@@ -3,6 +3,7 @@ import { apiRequest } from "../core/api.js";
 import { loadConfig } from "../core/config.js";
 import { Budget } from "../core/net.js";
 import { dataResult, guarded, NOTHING_MOVED, ToolError } from "../core/result.js";
+import { keyframeUrl } from "../core/still.js";
 import { capJson, capRecord, capRecords, clean, quoted } from "../core/text.js";
 import { StylesInput, StylesOutput } from "../schemas.js";
 import { COPY } from "./copy.js";
@@ -90,7 +91,10 @@ export const stylesTool = defineTool({
           .filter((p): p is string => p !== null)
           .slice(0, 6)
           .join(" / ");
-        return `- ${f.id}: ${quoted(f.title ?? f.id, 60)}${price ? `, ${price} USDC` : ""}${f.availability ? ` (${quoted(f.availability, 30)})` : ""}`;
+        const line = `- ${f.id}: ${quoted(f.title ?? f.id, 60)}${price ? `, ${price} USDC` : ""}${f.availability ? ` (${quoted(f.availability, 30)})` : ""}`;
+        // A sample video link only on Keyframe's own hosts (the preview-still guard), quoted as data.
+        const sample = typeof f.sample_url === "string" ? keyframeUrl(cfg, f.sample_url) : null;
+        return sample ? `${line}\n  sample: ${quoted(sample, 600)}` : line;
       });
       const head = live
         ? `Keyframe catalog (live, ${formats.length} formats). Prices are in USDC on Base; the quote is authoritative.`

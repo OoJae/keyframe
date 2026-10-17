@@ -9,6 +9,7 @@ import { type Check, fail, failed, pass, skip, warn } from "./checks.js";
 import { type Config, findFactory } from "./config.js";
 import { allowlistChecks, type Derived, dealBoundsCheck, derive, MAX_LOCK_S, shapeChecks, ZERO32 } from "./deal.js";
 import { fetchManifest, ipfsCidOf, sourcesOf } from "./delivery.js";
+import { type Link, linksOf } from "./links.js";
 import type { Budget } from "./net.js";
 import { type Probe, probe402 } from "./probe.js";
 import { crossRead } from "./rpc.js";
@@ -39,6 +40,8 @@ export type QuoteReview = {
   buyerChecked: boolean;
   /** Preview links that may be shown: only plain URLs on Keyframe's own hosts (else null). */
   preview: { still: string | null; video: string | null };
+  /** Backend links on the quote (links[], e.g. the motion-preview page), own hosts only; shown in the card's text. */
+  links: Link[];
 };
 
 /** What the caller already knows independently of the backend: the user's wallet and the deal it reviewed. */
@@ -195,7 +198,8 @@ export async function reviewQuote(
     still: keyframeUrl(cfg, quote.preview.still_url),
     video: keyframeUrl(cfg, quote.preview.video_url),
   };
-  const base = { quote, terms: t, derived, checks, escrow, buyerChecked, preview };
+  const links = linksOf(cfg, quote);
+  const base = { quote, terms: t, derived, checks, escrow, buyerChecked, preview, links };
   if (!opts.live || quote.status !== "final") {
     return { ...base, fatal: failed(checks), probe: null, route: null };
   }

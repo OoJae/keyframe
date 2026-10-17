@@ -10,6 +10,7 @@ import { loadConfig } from "../core/config.js";
 import { derive, inputAddress, parseTerms, payoutSummary, shapeChecks, ZERO32 } from "../core/deal.js";
 import { fetchManifest, ipfsCidOf, manifestUrl, sourcesOf, verifyChunks } from "../core/delivery.js";
 import { envelopeOf } from "../core/envelope.js";
+import { type Link, linkLine, linksOf } from "../core/links.js";
 import { Budget } from "../core/net.js";
 import { type Snapshot, snapshot } from "../core/onchain.js";
 import { boundSpec, type Resolved, resolveOrder, SETTLING_TEXT } from "../core/resolve.js";
@@ -335,7 +336,8 @@ export const verifyTool = defineTool({
         return finish("funding", r, s, checks, null);
       }
       const { s, checks, deliveryOut } = await delivery(r, input, budget, cfg);
-      return finish("delivery", r, s, checks, deliveryOut);
+      const watch = linksOf(cfg, r.paid, r.order).find((l) => l.kind === "watch") ?? null;
+      return finish("delivery", r, s, checks, deliveryOut, watch);
     }, NOTHING_MOVED),
 });
 
@@ -345,6 +347,7 @@ function finish(
   s: Snapshot,
   checks: Check[],
   deliveryOut: Record<string, unknown> | null,
+  watch: Link | null = null,
 ) {
   if (checks.length > 60) throw new ToolError("Too many checks to report.");
   const verdict = verdictOf(checks);
@@ -379,8 +382,10 @@ function finish(
   ];
   if (deliveryOut && typeof deliveryOut.manifest_url === "string") {
     lines.push(
-      `Encrypted copy: ${deliveryOut.manifest_url} (chunks alongside). The key is public on Base, so this file stays openable even without Keyframe's server${r.spec?.delivery === "private" ? " (private order: with your k_buyer)" : ""}. Keyframe's download link is in keyframe_status.`,
+      `Encrypted copy: ${deliveryOut.manifest_url} (chunks alongside). The key is public on Base, so this file stays openable even without Keyframe's server${r.spec?.delivery === "private" ? " (private order: with your k_buyer)" : ""}.${watch ? "" : " keyframe_status shows Keyframe's watch link when one is available."}`,
     );
+    // Keyframe's watch page (paid response or order record), only on Keyframe's own hosts; the label is fixed here.
+    if (watch) lines.push(linkLine(watch));
   }
   if (r.paid?.charged === "unknown") lines.push(SETTLING_TEXT);
   if (r.paid?.error === "settlement_recording_delayed") {

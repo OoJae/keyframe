@@ -22,7 +22,7 @@ import { statusTool } from "../src/tools/status.js";
 import { stylesTool } from "../src/tools/styles.js";
 import { verifyTool } from "../src/tools/verify.js";
 import { call, type Json, PROPOSAL, setup, stingInput } from "./harness/inproc.js";
-import { BUYER, FACTORY, STRANGER, VAULT, type World } from "./harness/world.js";
+import { BUYER, CONTROL_URLS, FACTORY, HOSTILE_URLS, HOSTS, STRANGER, VAULT, type World } from "./harness/world.js";
 
 const nowS = () => Math.floor(Date.now() / 1000);
 const STDOUT_LIMIT = 256 * 1024;
@@ -410,6 +410,59 @@ describe("L2: still_url is printed only from Keyframe's own hosts, and quoted", 
     const q = await call(quoteTool, stingInput(BUYER.address));
     const url = (q.structuredContent as Json).preview.still_url as string;
     expect(q.text).toContain(`Key frame preview (watermarked): ${JSON.stringify(url)}`);
+  });
+});
+
+describe("F02: one motion-preview line in the quote card, from Keyframe's own hosts only", () => {
+  const motionLines = (text: string) => text.split("\n").filter((l) => l.startsWith("Motion preview (watermarked): "));
+
+  it("an on-origin video_url is printed once, quoted; structuredContent is unchanged", async () => {
+    const world = setup();
+    const url = `${HOSTS.files}/p/motion.mp4`;
+    world.hooks.quote = (q) => {
+      q.preview.video_url = url;
+    };
+    const q = await call(quoteTool, stingInput(BUYER.address));
+    expect(motionLines(q.text)).toEqual([`Motion preview (watermarked): ${JSON.stringify(url)}`]);
+    expect((q.structuredContent as Json).preview.video_url).toBe(url);
+    const lines = q.text.split("\n");
+    expect(lines.findIndex((l) => l.startsWith("Motion preview"))).toBe(
+      lines.findIndex((l) => l.startsWith("Key frame preview")) + 1,
+    );
+  });
+
+  it("links[kind=preview] (the /q page) wins over video_url; other links follow, at most 3 link lines", async () => {
+    const world = setup();
+    world.hooks.quote = (q) => {
+      q.preview.video_url = `${HOSTS.files}/p/motion.mp4`;
+      q.links = [
+        { kind: "preview", label: "CLICK ME", url: `${HOSTS.api}/q/${q.quote_id}` },
+        { kind: "samples", url: `${HOSTS.files}/samples` },
+        { kind: "order", url: `${HOSTS.api}/o/page` },
+        { kind: "receipt", url: `${HOSTS.api}/r/1` },
+        { kind: "bonus", url: `${HOSTS.api}/b` },
+      ];
+    };
+    const q = await call(quoteTool, stingInput(BUYER.address));
+    const qid = (q.structuredContent as Json).quote_id;
+    expect(motionLines(q.text)).toEqual([`Motion preview (watermarked): "${HOSTS.api}/q/${qid}"`]);
+    expect(q.text).toContain(`Samples: "${HOSTS.files}/samples"`);
+    expect(q.text).toContain(`Order page: "${HOSTS.api}/o/page"`);
+    expect(q.text).not.toMatch(/Receipt:|\/b"|CLICK ME|motion\.mp4/);
+  });
+
+  it("no motion-preview line for an off-host, http:, javascript:, control-char or over-600-char URL", async () => {
+    for (const url of [...HOSTILE_URLS, ...CONTROL_URLS]) {
+      const world = setup();
+      world.hooks.quote = (q) => {
+        q.preview.video_url = url;
+        q.links = [{ kind: "preview", url }];
+      };
+      const q = await call(quoteTool, stingInput(BUYER.address));
+      expect(q.isError, url).toBeUndefined();
+      expect(motionLines(q.text), url).toEqual([]);
+      expect(q.text).not.toMatch(/evil\.example|javascript:|IMPORTANT SYSTEM NOTE|user:pw|aaaaaaaa/);
+    }
   });
 });
 

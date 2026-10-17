@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { quoteTool } from "../src/tools/quote.js";
 import { verifyTool } from "../src/tools/verify.js";
 import { call, type Json, setup, stingInput } from "./harness/inproc.js";
-import { BUYER, FACTORY, MP4, type World } from "./harness/world.js";
+import { BUYER, CONTROL_URLS, FACTORY, HOSTILE_URLS, HOSTS, MP4, type World } from "./harness/world.js";
 
 async function paidOrder(world: World, extra: Record<string, unknown> = {}) {
   const rec = await world.createQuote(
@@ -288,5 +288,59 @@ describe("keyframe_verify delivery", () => {
     expect(r.ms).toBeLessThan(8_500);
     expect(s.verdict).toBe("partial");
     expect(byId(s, "manifest").status).toBe("skip");
+  });
+});
+
+describe("keyframe_verify delivery: Keyframe's watch link (F02)", () => {
+  const FALLBACK = "keyframe_status shows Keyframe's watch link when one is available.";
+
+  it("shows Watch & download from the paid response's watch_url", async () => {
+    const world = setup();
+    const { rec, paid } = await paidOrder(world);
+    world.release(rec.quote.quote_id as string);
+    const url = `${HOSTS.api}/w/${rec.orderId}`;
+    const r = await call(verifyTool, { mode: "delivery", paid_response: { ...paid, watch_url: url } });
+    expect((r.structuredContent as Record<string, Json>).verdict, r.text).toBe("verified");
+    const lines = r.text.split("\n");
+    const at = lines.indexOf(`Watch & download: ${JSON.stringify(url)}`);
+    expect(lines[at - 1]).toMatch(/^Encrypted copy: .*without Keyframe's server\.$/);
+    expect(r.text).not.toContain(FALLBACK);
+    expect(r.text).not.toContain("download link is in keyframe_status");
+  });
+
+  it("shows Watch & download from the order record (order_id), links[] kind watch included", async () => {
+    const world = setup();
+    const { rec } = await paidOrder(world);
+    world.release(rec.quote.quote_id as string);
+    world.orderExtra = { links: [{ kind: "watch", url: `${HOSTS.files}/w/${rec.orderId}` }] };
+    const r = await call(verifyTool, { mode: "delivery", order_id: rec.orderId });
+    expect(r.text).toContain(`Watch & download: "${HOSTS.files}/w/${rec.orderId}"`);
+    expect(r.text).not.toContain(FALLBACK);
+  });
+
+  it("without a valid watch link: the fallback sentence, and nothing from a foreign host", async () => {
+    const world = setup();
+    const { rec, paid } = await paidOrder(world);
+    world.release(rec.quote.quote_id as string);
+    let r = await call(verifyTool, { mode: "delivery", paid_response: paid });
+    expect(r.text).toContain(
+      `(chunks alongside). The key is public on Base, so this file stays openable even without Keyframe's server. ${FALLBACK}`,
+    );
+    expect(r.text).not.toContain("Watch & download");
+    for (const url of [...HOSTILE_URLS.slice(0, 5), ...CONTROL_URLS]) {
+      r = await call(verifyTool, { mode: "delivery", paid_response: { ...paid, watch_url: url } });
+      expect(r.text, url).toContain(FALLBACK);
+      expect(r.text).not.toMatch(/Watch & download|evil\.example|javascript:|data:text|IMPORTANT/);
+    }
+  });
+
+  it("not delivered yet: no watch line and no fallback sentence", async () => {
+    const world = setup();
+    const { rec, paid } = await paidOrder(world);
+    const r = await call(verifyTool, {
+      mode: "delivery",
+      paid_response: { ...paid, watch_url: `${HOSTS.api}/w/${rec.orderId}` },
+    });
+    expect(r.text).not.toMatch(/Watch & download|watch link/);
   });
 });

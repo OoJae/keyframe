@@ -3,6 +3,7 @@
 
 import type { Check } from "./checks.js";
 import { failed } from "./checks.js";
+import { linkLine, MAX_LINK_LINES } from "./links.js";
 import type { QuoteReview } from "./quote.js";
 import { etaText, formatTitle } from "./quote.js";
 import { capJson, chunkAddr, clean, eth, quoted, shortAddr, usdc, utc } from "./text.js";
@@ -166,6 +167,12 @@ export function quoteCard(r: QuoteReview): string {
   }
   // L2: only a plain link on Keyframe's own hosts, and quoted as data.
   if (r.preview.still) lines.push(`Key frame preview (watermarked): ${quoted(r.preview.still, 600)}`);
+  // One motion-preview line (the quote's preview page, else its watermarked video), then other backend links; at
+  // most 3 link lines, labels fixed by the plugin.
+  const motion = r.links.find((l) => l.kind === "preview")?.url ?? r.preview.video;
+  if (motion) lines.push(linkLine({ kind: "preview", url: motion }));
+  const others = r.links.filter((l) => l.kind !== "preview" && l.url !== motion);
+  lines.push(...others.slice(0, MAX_LINK_LINES - (motion ? 1 : 0)).map((l) => linkLine(l)));
   const empty = r.escrow.code === "none" ? " Nothing is deployed there yet." : "";
   lines.push(
     `Sealed envelope: ${shortAddr(r.derived.escrow)} (full: ${r.derived.escrow}).${empty} The address is computed from this`,
