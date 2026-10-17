@@ -11,8 +11,8 @@
 // log (redacted) and out of tracked files; the secret env files in the run directory are deleted on exit.
 //
 //   FORK_URL=… E2E_RUN_DIR=… node apps/api/scripts/e2e-fork.mjs
-import { execFileSync, spawn } from "node:child_process";
-import { createCipheriv, createHash, createHmac, randomBytes } from "node:crypto";
+import { execFile, execFileSync, spawn } from "node:child_process";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { createWriteStream, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { join, resolve } from "node:path";
@@ -438,44 +438,6 @@ async function signFor(url, account) {
   const required = x.getPaymentRequiredResponse((n) => unpaid.headers.get(n), body);
   const payload = await x.createPaymentPayload(required);
   return { headers: x.encodePaymentSignatureHeader(payload), nonce: payload.payload.authorization.nonce };
-}
-
-/** KFC1 seal with a raw per-file key (what the Studio CLI does with the job's kfc1.k_file), frozen §5. */
-function sealKfc1(plain, kFileHex, saltHex, media) {
-  const CHUNK = 1_048_560;
-  const n = Math.max(1, Math.ceil(plain.byteLength / CHUNK));
-  const key = Buffer.from(kFileHex.slice(2), "hex");
-  const salt = Buffer.from(saltHex.slice(2), "hex");
-  const u64 = (x) => {
-    const b = Buffer.alloc(8);
-    b.writeBigUInt64BE(BigInt(x));
-    return b;
-  };
-  const chunks = [];
-  const ciphertext = [];
-  const plaintext = [];
-  for (let i = 0; i < n; i++) {
-    const part = plain.subarray(i * CHUNK, Math.min(plain.byteLength, (i + 1) * CHUNK));
-    const c = createCipheriv("aes-256-gcm", key, Buffer.concat([Buffer.alloc(4), u64(i)]));
-    c.setAAD(Buffer.concat([Buffer.from("KFC1"), salt, u64(i), u64(n)]));
-    const ct = Buffer.concat([c.update(part), c.final(), c.getAuthTag()]);
-    chunks.push(ct);
-    ciphertext.push(sha256hex(ct));
-    plaintext.push(sha256hex(part));
-  }
-  const manifest = {
-    v: 1,
-    alg: "KFC1",
-    salt: saltHex,
-    chunkSize: CHUNK,
-    size: plain.byteLength,
-    chunks: n,
-    plaintextSha256: sha256hex(plain),
-    ciphertext,
-    plaintext,
-    media,
-  };
-  return { manifest, chunks };
 }
 
 async function fundUsdc(to, amount) {
@@ -1853,47 +1815,25 @@ async function main() {
     );
     await step(
       "12.2",
-      "Studio CLI delivery: job with k_file → preview + KFC1 manifest/chunks → API relays deliver(T, manifestHash)",
+      "Studio CLI (apps/worker `studio inbox` + `studio deliver`): spec gate → watermarked review preview + KFC1 seal with the order's key → API relays deliver(T, manifestHash)",
       async () => {
-        const auth = { authorization: `Bearer ${WORKER_TOKEN}`, "x-worker-id": "studio-cli-e2e" };
-        const inbox = await (await fetch(`${api}/internal/studio/orders`, { headers: auth })).json();
-        check(
-          inbox.orders.some((o) => o.order_id === paidS.order_id),
-          "order not in the Studio inbox",
-        );
-        const open = await fetch(`${api}/internal/studio/orders/${paidS.order_id}/delivery`, {
-          method: "POST",
-          headers: auth,
-        });
-        check(open.status === 200, `delivery ${open.status}`);
-        const job = await open.json();
-        addSecret(job.kfc1.k_file);
-        const mp4 = readFileSync(join(API_DIR, "test/fixtures/studio-10s-9x16.m4v"));
-        const sealed = sealKfc1(mp4, job.kfc1.k_file, job.kfc1.salt, {
-          mime: "video/mp4",
-          width: 1080,
-          height: 1920,
-          durationMs: 10_000,
-          fps: 30,
-        });
-        const put = async (path, body, type) => {
-          const r = await fetch(`${api}${path}`, { method: "PUT", headers: { ...auth, "content-type": type }, body });
-          check(r.status === 200, `${path} → ${r.status} ${await r.text()}`);
-        };
-        await put(job.upload.preview, mp4, "video/mp4");
-        await put(job.upload.manifest, JSON.stringify(sealed.manifest), "application/json");
-        for (let i = 0; i < sealed.chunks.length; i++)
-          await put(job.upload.chunk.replace("{i}", String(i)), sealed.chunks[i], "application/octet-stream");
-        const done = await fetch(`${api}${job.upload.done}`, {
-          method: "POST",
-          headers: { ...auth, "content-type": "application/json" },
-          body: "{}",
-        });
-        const d = await done.json();
-        check(
-          done.status === 200 && (d.state === "confirmed" || d.state === "pending"),
-          `done ${done.status} ${JSON.stringify(d)}`,
-        );
+        const cli = (...args) =>
+          new Promise((resolve, reject) =>
+            execFile(
+              process.execPath,
+              [`--env-file=${workerEnvFile}`, "src/cli.ts", "studio", ...args],
+              { cwd: WORKER_DIR, encoding: "utf8", env: { ...process.env, NODE_ENV: "production" }, timeout: 180_000 },
+              (err, stdout, stderr) =>
+                err ? reject(new Error(`studio ${args[0]}: ${stderr || err.message}`)) : resolve(stdout),
+            ),
+          );
+        const inbox = await cli("inbox");
+        check(inbox.includes(paidS.order_id), "order not in the Studio inbox");
+        const out = await cli("deliver", paidS.order_id, join(API_DIR, "test/fixtures/studio-10s-9x16.m4v"));
+        const m =
+          /manifest (0x[0-9a-f]{64}), (\d+) chunk\(s\); deliver tx (0x[0-9a-f]{64}) \((confirmed|pending)\)/.exec(out);
+        check(m !== null, `studio deliver: ${out.slice(0, 400)}`);
+        const d = { manifest_hash: m[1], tx: m[3] };
         report.txs.studio_deliver = d.tx;
         const o = await waitFor(
           "Delivered",
@@ -1907,7 +1847,7 @@ async function main() {
         check(o.manifestHash === d.manifest_hash, "on-chain manifestHash != delivered manifest");
         const st = await tool("keyframe_status", { order_id: paidS.order_id, access_token: paidS.access_token });
         check(!st.isError && st.sc.envelope === "IN REVIEW", `envelope ${st.sc?.envelope}`);
-        return `deliver tx ${d.tx}; Delivered with manifest ${d.manifest_hash}; keyframe_status → IN REVIEW`;
+        return `studio deliver tx ${d.tx}; Delivered with manifest ${d.manifest_hash}; keyframe_status → IN REVIEW`;
       },
     );
     await step(
