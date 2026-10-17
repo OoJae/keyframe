@@ -17,12 +17,27 @@ export type MapInput = {
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const two = (n: number) => String(n).padStart(2, "0");
 
-/** "Oct 24 · 18:00 UTC" from an ISO-8601 UTC instant. Locale-independent on purpose. */
-export function formatUtc(iso: string): string {
+/** "UTC+1", "UTC+5:30", "UTC-3" for an offset in minutes. */
+const offsetLabel = (off: number) => {
+  const a = Math.abs(off);
+  return `UTC${off < 0 ? "-" : "+"}${Math.floor(a / 60)}${a % 60 ? `:${two(a % 60)}` : ""}`;
+};
+
+/**
+ * "Oct 24 · 19:00 WAT" from an ISO-8601 instant, shown in the UTC offset the buyer wrote and labelled with tz_label
+ * (else "UTC+1"). Locale-independent on purpose. A label can't be checked against "Z", so it is used only with a
+ * non-zero offset: a UTC time is always shown as UTC, never mislabelled as somebody's local time.
+ */
+export function formatTarget(iso: string, tzLabel?: unknown): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime()))
     throw new TemplateError("bad_variables", `not a datetime: ${JSON.stringify(iso).slice(0, 40)}`);
-  return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()} · ${two(d.getUTCHours())}:${two(d.getUTCMinutes())} UTC`;
+  const m = /([+-])(\d{2}):?(\d{2})$/.exec(iso.trim());
+  const off = m ? (m[1] === "-" ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3])) : 0;
+  const label = typeof tzLabel === "string" ? tzLabel.trim() : "";
+  const zone = off === 0 ? "UTC" : /^[A-Za-z][A-Za-z0-9+:/ -]{0,11}$/.test(label) ? label : offsetLabel(off);
+  const at = new Date(d.getTime() + off * 60_000);
+  return `${MONTHS[at.getUTCMonth()]} ${at.getUTCDate()} · ${two(at.getUTCHours())}:${two(at.getUTCMinutes())} ${zone}`;
 }
 
 type Palette = { bg: string; fg: string; accent: string };
@@ -60,7 +75,7 @@ const MAPPERS: Record<string, Mapper> = {
     const cap = max?.type === "number" ? max.max : Number.MAX_SAFE_INTEGER;
     return {
       label: str(i.params.label),
-      target_text: formatUtc(target),
+      target_text: formatTarget(target, i.params.tz_label),
       remaining_s: Math.min(cap, Math.max(0, targetS - i.anchorS)),
       cta: str(i.params.cta),
       ...(palette ?? {}),
