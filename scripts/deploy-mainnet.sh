@@ -45,7 +45,10 @@ predict() {
     | grep -E "predicted|initCodeHash|SELLER|already|simulated" || die "forge script simulation failed (run it manually to see why)"
 }
 
-factory_addr() {
+factory_addr() { # the deployed factory once recorded (its bytecode is v1, see docs/deploy/factory-v1.md), else the
+  # CREATE2 prediction for the current source
+  local rec="$ROOT/contracts/deployments/8453.json"
+  if [ -f "$rec" ]; then node -e 'console.log(require(process.argv[1]).factory)' "$rec"; return; fi
   (cd "$ROOT/contracts" && USDC=$USDC SELLER=$SELLER_ADDRESS forge script script/Deploy.s.sol --rpc-url "$RPC" 2>/dev/null) \
     | awk '/predicted factory/{print $NF}'
 }
