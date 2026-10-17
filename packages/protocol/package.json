@@ -1,0 +1,36 @@
+{
+  "name": "@keyframe/protocol",
+  "version": "1.0.0",
+  "description": "Keyframe frozen protocol v1: Terms/EIP-712, CREATE2 escrow derivation, ABIs, JCS, keys, KFC1, x402 parsing.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src"
+  ],
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.src.json",
+    "test": "vitest run",
+    "vectors": "KEYFRAME_WRITE_VECTORS=1 vitest run test/vectors.test.ts",
+    "fixtures:mp4": "sh scripts/gen-mp4-fixture.sh"
+  },
+  "dependencies": {
+    "viem": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@x402/core": "2.28.0",
+    "fast-check": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

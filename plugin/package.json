@@ -1,5 +1,5 @@
 {
-  "name": "my-plugin",
+  "name": "keyframe",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -13,10 +13,14 @@
     "build": "esbuild src/plugin.ts --bundle --platform=node --format=esm --target=node24 --minify --outfile=dist/plugin.mjs",
     "conformance": "node scripts/conformance.mjs",
     "test": "node scripts/test.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "unit": "tsc -p tsconfig.test.json && pnpm run build && vitest run",
+    "sync:protocol": "node ../scripts/sync-protocol.mjs",
+    "check:protocol": "node ../scripts/sync-protocol.mjs --check"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.0.0",
+    "viem": "2.51.3",
     "zod": "4.4.3"
   },
   "devDependencies": {
@@ -24,6 +28,8 @@
     "esbuild": "0.28.2",
     "tsx": "4.23.12",
     "typescript": "5.9.3",
-    "ajv": "8.20.0"
+    "ajv": "8.20.0",
+    "fast-check": "4.10.2",
+    "vitest": "5.0.3"
   }
 }

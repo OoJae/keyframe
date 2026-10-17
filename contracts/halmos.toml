@@ -1,0 +1,5 @@
+# Halmos 0.3.3 settings. Run with the matching Foundry profile (dynamic test linking off):
+#   FOUNDRY_PROFILE=halmos ../.tools/halmos-venv/bin/halmos
+[global]
+forge-build-out = "out-halmos"
+match-contract = "KeyframeEscrowSymTest"

@@ -1,0 +1,3215 @@
+{
+  "catalogVersion": 1,
+  "plugin": "keyframe",
+  "frozenInterfaces": "v1",
+  "protocolVersion": "2026-07-28",
+  "toolCount": 9,
+  "sha256": "80aa5fe49208cd076d13008c6c79693abc5a83fe9e2ff15a03d5c7f183c7bea2",
+  "tools": [
+    {
+      "name": "keyframe_styles",
+      "title": "Keyframe · browse formats and prices (free)",
+      "description": "Lists what Keyframe Studio makes and what it costs: formats (launch sting, countdown, portfolio card, kinetic post, price-chart moment, and human Studio commissions), styles, aspect ratios, durations, prices in USDC on Base, typical delivery time, current queue and sample video links. Every template is designed by hand by Keyframe's designer; agents only fill typed fields. Free; moves no money. If the user already said what they want, go straight to keyframe_quote.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "tier": {
+            "description": "only this tier",
+            "type": "string",
+            "enum": [
+              "instant",
+              "studio"
+            ]
+          },
+          "format": {
+            "description": "only this format id, e.g. launch_sting",
+            "type": "string",
+            "pattern": "^[a-z0-9_.-]{1,64}$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": [
+              "live",
+              "embedded"
+            ]
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 800
+          },
+          "formats": {
+            "maxItems": 64,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "maxLength": 64
+                }
+              },
+              "required": [
+                "id"
+              ],
+              "additionalProperties": {}
+            }
+          },
+          "studio": {
+            "anyOf": [
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "policy": {
+            "anyOf": [
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "next": {
+            "type": "object",
+            "properties": {
+              "tool": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "input": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "note": {
+                "type": "string",
+                "maxLength": 800
+              }
+            },
+            "required": [
+              "tool",
+              "input",
+              "note"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "source",
+          "summary",
+          "formats",
+          "studio",
+          "policy",
+          "next"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "keyframe_quote",
+      "title": "Keyframe · 1. quote an order (free)",
+      "description": "Prices an order and prepares its pay-on-delivery escrow. Fill only the typed fields; omit optional fields rather than inventing names, colors or numbers the user did not give. buyer is the address of the PayBox wallet that will pay (list_credentials → metadata.address). For portfolio_pulse, first call get_portfolio for that address and pass its result unchanged as params.portfolio. Returns price, delivery time, deadline, a watermarked preview of the key frame, the escrow address (derived from the deal terms and re-checked by this plugin) and the payment route for this wallet. Moves no money. Show the user the price, deadline, preview link and escrow address. Next: the tool named in next.tool. If quote_status is draft (preview pending), call keyframe_status with quote_id after retry_after_ms. Amounts are atomic USDC (1000000 = 1.00 USDC).",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "buyer": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{40}$",
+            "description": "address of the PayBox wallet that will pay (list_credentials → metadata.address)"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "launch_sting",
+              "countdown",
+              "portfolio_pulse",
+              "kinetic_post",
+              "chart_moment",
+              "studio",
+              "catalog"
+            ],
+            "description": "what to make; new formats added later use catalog"
+          },
+          "aspect": {
+            "default": "9:16",
+            "type": "string",
+            "enum": [
+              "9:16",
+              "1:1",
+              "16:9"
+            ]
+          },
+          "palette": {
+            "description": "omit to use the style's own colors; never invent brand colors",
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "void",
+                  "paper",
+                  "signal",
+                  "mono",
+                  "ember"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "bg": {
+                    "type": "string",
+                    "pattern": "^#[0-9A-Fa-f]{6}$"
+                  },
+                  "fg": {
+                    "type": "string",
+                    "pattern": "^#[0-9A-Fa-f]{6}$"
+                  },
+                  "accent": {
+                    "type": "string",
+                    "pattern": "^#[0-9A-Fa-f]{6}$"
+                  }
+                },
+                "required": [
+                  "bg",
+                  "fg",
+                  "accent"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "deadline_minutes": {
+            "default": 30,
+            "description": "Instant only: minutes until the delivery deadline",
+            "type": "integer",
+            "minimum": 5,
+            "maximum": 1440
+          },
+          "delivery": {
+            "description": "default public; portfolio_pulse defaults to private",
+            "type": "string",
+            "enum": [
+              "public",
+              "private"
+            ]
+          },
+          "receipt_end_card": {
+            "default": true,
+            "type": "boolean"
+          },
+          "sound": {
+            "default": "studio",
+            "type": "string",
+            "enum": [
+              "none",
+              "studio"
+            ]
+          },
+          "rights_confirmed": {
+            "type": "boolean",
+            "const": true,
+            "description": "the user owns or may use every name, logo and text supplied, and nothing depicts a real person"
+          },
+          "params": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "style": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 32,
+                    "description": "style id from keyframe_styles"
+                  },
+                  "wordmark": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 24
+                  },
+                  "tagline": {
+                    "type": "string",
+                    "maxLength": 60
+                  },
+                  "logo_url": {
+                    "description": "https PNG/WebP/SVG of the user's own logo, at most 2 MB",
+                    "type": "string",
+                    "maxLength": 512,
+                    "format": "uri"
+                  },
+                  "duration_s": {
+                    "default": 6,
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "const": 6
+                      },
+                      {
+                        "type": "number",
+                        "const": 10
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "style",
+                  "wordmark"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "style": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 32,
+                    "description": "style id from keyframe_styles"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 32
+                  },
+                  "target": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                  },
+                  "cta": {
+                    "type": "string",
+                    "maxLength": 24
+                  },
+                  "tz_label": {
+                    "type": "string",
+                    "maxLength": 12
+                  }
+                },
+                "required": [
+                  "style",
+                  "label",
+                  "target"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "style": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 32,
+                    "description": "style id from keyframe_styles"
+                  },
+                  "title": {
+                    "type": "string",
+                    "maxLength": 32
+                  },
+                  "handle": {
+                    "type": "string",
+                    "maxLength": 24
+                  },
+                  "display": {
+                    "default": "percent_only",
+                    "type": "string",
+                    "enum": [
+                      "percent_only",
+                      "values"
+                    ]
+                  },
+                  "as_of": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                  },
+                  "portfolio": {
+                    "description": "the get_portfolio result for the buyer address, passed through unchanged",
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "maxLength": 64
+                    },
+                    "additionalProperties": {}
+                  },
+                  "holdings": {
+                    "maxItems": 6,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "symbol": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 12
+                        },
+                        "usd": {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 1000000000000000
+                        },
+                        "change_24h": {
+                          "anyOf": [
+                            {
+                              "type": "number",
+                              "minimum": -1,
+                              "maximum": 1000
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "symbol",
+                        "change_24h"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "style",
+                  "as_of"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "style": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 32,
+                    "description": "style id from keyframe_styles"
+                  },
+                  "text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 280
+                  },
+                  "byline": {
+                    "type": "string",
+                    "maxLength": 32
+                  },
+                  "emphasis": {
+                    "maxItems": 5,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 24
+                    }
+                  }
+                },
+                "required": [
+                  "style",
+                  "text"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "style": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 32,
+                    "description": "style id from keyframe_styles"
+                  },
+                  "asset": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80,
+                    "description": "\"ETH\" or \"base:0x…\""
+                  },
+                  "window": {
+                    "type": "string",
+                    "enum": [
+                      "24h",
+                      "7d",
+                      "30d",
+                      "90d",
+                      "1y"
+                    ]
+                  },
+                  "callout": {
+                    "type": "string",
+                    "maxLength": 40
+                  },
+                  "mark": {
+                    "default": "change",
+                    "type": "string",
+                    "enum": [
+                      "change",
+                      "high",
+                      "low",
+                      "none"
+                    ]
+                  }
+                },
+                "required": [
+                  "style",
+                  "asset",
+                  "window"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "deliverable": {
+                    "type": "string",
+                    "enum": [
+                      "studio_sting",
+                      "studio_spot"
+                    ]
+                  },
+                  "brief": {
+                    "type": "string",
+                    "minLength": 40,
+                    "maxLength": 2000
+                  },
+                  "references": {
+                    "maxItems": 5,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "maxLength": 512,
+                      "format": "uri"
+                    }
+                  },
+                  "brand_assets_url": {
+                    "type": "string",
+                    "maxLength": 512,
+                    "format": "uri"
+                  }
+                },
+                "required": [
+                  "deliverable",
+                  "brief"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "catalog_id": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9_.-]{2,64}$"
+                  },
+                  "values": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^[a-z0-9_]{1,64}$"
+                    },
+                    "additionalProperties": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 2000
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "maxItems": 64,
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "maxLength": 200
+                              },
+                              {
+                                "type": "number"
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "catalog_id",
+                  "values"
+                ],
+                "additionalProperties": false
+              }
+            ],
+            "description": "typed fields of the chosen format only"
+          },
+          "from_quote_id": {
+            "description": "re-quote with changes to an earlier quote",
+            "type": "string",
+            "pattern": "^q_[1-9A-HJ-NP-Za-km-z]{22}$"
+          },
+          "options": {
+            "description": "extra catalog options named by keyframe_styles",
+            "type": "object",
+            "propertyNames": {
+              "type": "string",
+              "pattern": "^[a-z0-9_]{1,32}$"
+            },
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                }
+              ]
+            }
+          }
+        },
+        "required": [
+          "buyer",
+          "format",
+          "rights_confirmed",
+          "params"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "quote_id": {
+            "type": "string"
+          },
+          "quote_status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "final",
+              "paid",
+              "expired",
+              "cancelled"
+            ]
+          },
+          "payable": {
+            "type": "boolean"
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 600
+          },
+          "tier": {
+            "type": "string",
+            "enum": [
+              "instant",
+              "studio"
+            ]
+          },
+          "format": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "price": {
+            "type": "object",
+            "properties": {
+              "atomic": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]{0,77})$"
+              },
+              "usdc": {
+                "type": "string",
+                "maxLength": 32
+              }
+            },
+            "required": [
+              "atomic",
+              "usdc"
+            ],
+            "additionalProperties": false
+          },
+          "eta_s": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "quote_expires_at": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "deadline": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "deadline_utc": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "preview": {
+            "type": "object",
+            "properties": {
+              "still_url": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 600
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "still_sha256": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-f]{64}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "video_url": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 600
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "frame_ms": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "still_url",
+              "still_sha256",
+              "video_url",
+              "frame_ms"
+            ],
+            "additionalProperties": false
+          },
+          "escrow": {
+            "type": "object",
+            "properties": {
+              "address": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              "code": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "eip1167",
+                      "other"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "balance_atomic": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]{0,77})$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "derivation": {
+                "type": "object",
+                "properties": {
+                  "factory": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                  },
+                  "vault_impl": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                  },
+                  "vault_impl_source": {
+                    "type": "string",
+                    "enum": [
+                      "argument",
+                      "factory_nonce_1"
+                    ]
+                  },
+                  "init_code_hash": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-f]{64}$"
+                  },
+                  "salt": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-f]{64}$"
+                  },
+                  "chain_id": {
+                    "type": "number",
+                    "const": 8453
+                  },
+                  "formula": {
+                    "type": "string",
+                    "maxLength": 400
+                  }
+                },
+                "required": [
+                  "factory",
+                  "vault_impl",
+                  "vault_impl_source",
+                  "init_code_hash",
+                  "salt",
+                  "chain_id",
+                  "formula"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "address",
+              "code",
+              "balance_atomic",
+              "derivation"
+            ],
+            "additionalProperties": false
+          },
+          "terms": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "terms_hash": {
+            "type": "string",
+            "pattern": "^0x[0-9a-f]{64}$"
+          },
+          "spec_hash": {
+            "type": "string",
+            "pattern": "^0x[0-9a-f]{64}$"
+          },
+          "delivery": {
+            "type": "string",
+            "enum": [
+              "public",
+              "private"
+            ]
+          },
+          "route": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "x402",
+                      "direct",
+                      "fund_first"
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 600
+                  },
+                  "wallet": {
+                    "type": "object",
+                    "properties": {
+                      "address": {
+                        "type": "string",
+                        "pattern": "^0x[0-9a-fA-F]{40}$"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "plain",
+                          "delegated",
+                          "contract",
+                          "unknown"
+                        ]
+                      },
+                      "delegate": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^0x[0-9a-fA-F]{40}$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "usdc_atomic": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]{0,77})$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "eth_wei": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]{0,77})$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "shortfall_atomic": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]{0,77})$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "consistent": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "address",
+                      "kind",
+                      "delegate",
+                      "usdc_atomic",
+                      "eth_wei",
+                      "shortfall_atomic",
+                      "consistent"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "kind",
+                  "reason",
+                  "wallet"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "checks": {
+            "maxItems": 40,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "maxLength": 40
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "pass",
+                    "fail",
+                    "warn",
+                    "skip"
+                  ]
+                },
+                "detail": {
+                  "type": "string",
+                  "maxLength": 400
+                }
+              },
+              "required": [
+                "id",
+                "status",
+                "detail"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "disclosures": {
+            "maxItems": 12,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 500
+            }
+          },
+          "retry_after_ms": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "next": {
+            "type": "object",
+            "properties": {
+              "tool": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "input": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "note": {
+                "type": "string",
+                "maxLength": 800
+              }
+            },
+            "required": [
+              "tool",
+              "input",
+              "note"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "quote_id",
+          "quote_status",
+          "payable",
+          "summary",
+          "tier",
+          "format",
+          "price",
+          "eta_s",
+          "quote_expires_at",
+          "deadline",
+          "deadline_utc",
+          "preview",
+          "escrow",
+          "terms",
+          "terms_hash",
+          "spec_hash",
+          "delivery",
+          "route",
+          "checks",
+          "disclosures",
+          "retry_after_ms",
+          "next"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "keyframe_commission",
+      "title": "Keyframe · 2. pay into escrow (1 approval)",
+      "description": "Creates the payment for a quote as one PayBox approval: an x402 payment of the quoted USDC on Base, gasless for the payer. The money goes to the order's escrow address, never to Keyframe directly. It can pay the studio only if the studio publishes the key to the buyer's file before the deadline; otherwise it can only return to the buyer, automatically. Before proposing, this plugin re-derives the escrow address and checks that the live payment request pays exactly that address and amount. Input: quote_id (valid 5 minutes). Use the wallet_id of the quote's buyer wallet. PayBox shows the payee and amount for approval. After approval, poll get_request until it finishes; never call this tool twice for one quote. Then call keyframe_verify with the paid response.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "quote_id": {
+            "type": "string",
+            "pattern": "^q_[1-9A-HJ-NP-Za-km-z]{22}$",
+            "description": "Keyframe quote id (q_ + 22 base58 characters), from keyframe_quote"
+          }
+        },
+        "required": [
+          "quote_id"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "io.paybox/transactionProposal": {
+            "type": "object",
+            "properties": {
+              "version": {
+                "type": "string",
+                "const": "1"
+              },
+              "expiresAt": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+              },
+              "kind": {
+                "type": "string",
+                "const": "x402"
+              },
+              "chain": {
+                "type": "string",
+                "enum": [
+                  "eip155:8453",
+                  "solana:mainnet"
+                ]
+              },
+              "request": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "maxLength": 2048,
+                    "format": "uri"
+                  },
+                  "method": {
+                    "type": "string",
+                    "enum": [
+                      "GET",
+                      "POST"
+                    ]
+                  },
+                  "body": {
+                    "$ref": "#/$defs/__schema0"
+                  }
+                },
+                "required": [
+                  "url",
+                  "method"
+                ],
+                "additionalProperties": false
+              },
+              "payment": {
+                "type": "object",
+                "properties": {
+                  "asset": {
+                    "type": "string"
+                  },
+                  "maxAmount": {
+                    "type": "string",
+                    "pattern": "^[1-9][0-9]{0,19}$"
+                  }
+                },
+                "required": [
+                  "asset",
+                  "maxAmount"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "version",
+              "expiresAt",
+              "kind",
+              "chain",
+              "request",
+              "payment"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "io.paybox/transactionProposal"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema0"
+                }
+              },
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "$ref": "#/$defs/__schema0"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "keyframe_commission_direct",
+      "title": "Keyframe · 2b. pay by direct transfer (1 approval, needs ETH gas)",
+      "description": "Payment route for wallets that cannot pay by x402 (for example EIP-7702-delegated wallets). Use only when keyframe_quote returns route.kind = 'direct'. Proposes one Base transaction: USDC.transfer(escrow address, exact price). PayBox's window shows the USDC contract as 'to'; the escrow address and amount are inside the data. Needs a little ETH on Base for gas. Use the wallet_id of the quote's buyer wallet. Poll get_request to success, then call keyframe_verify with mode funding, quote_id and tx_hash.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "quote_id": {
+            "type": "string",
+            "pattern": "^q_[1-9A-HJ-NP-Za-km-z]{22}$",
+            "description": "Keyframe quote id (q_ + 22 base58 characters), from keyframe_quote"
+          }
+        },
+        "required": [
+          "quote_id"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "io.paybox/transactionProposal": {
+            "type": "object",
+            "properties": {
+              "version": {
+                "type": "string",
+                "const": "1"
+              },
+              "expiresAt": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+              },
+              "kind": {
+                "type": "string",
+                "const": "evm"
+              },
+              "chain": {
+                "type": "string",
+                "pattern": "^eip155:(0|[1-9][0-9]*)$"
+              },
+              "transaction": {
+                "type": "object",
+                "properties": {
+                  "to": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                  },
+                  "value": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]{0,77})$"
+                  },
+                  "data": {
+                    "type": "string",
+                    "pattern": "^0x(?:[0-9a-fA-F]{2})*$"
+                  }
+                },
+                "required": [
+                  "to",
+                  "value",
+                  "data"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "version",
+              "expiresAt",
+              "kind",
+              "chain",
+              "transaction"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "io.paybox/transactionProposal"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "keyframe_status",
+      "title": "Keyframe · 3. check an order (free)",
+      "description": "Order progress: preview ready, sealed (paid into escrow), rendering (percent and time left), key published (delivered and paid), returned (refunded) or void. Accepts quote_id (this also finalizes a quote whose preview was pending) or order_id (+ access_token for private orders). Waits up to wait_s seconds (max 6) for a change. Free; moves no money. While rendering, call again after poll_after_s. When the state is KEY PUBLISHED or RETURNED, call keyframe_verify.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "quote_id": {
+            "type": "string",
+            "pattern": "^q_[1-9A-HJ-NP-Za-km-z]{22}$",
+            "description": "Keyframe quote id (q_ + 22 base58 characters), from keyframe_quote"
+          },
+          "order_id": {
+            "type": "string",
+            "pattern": "^o_[1-9A-HJ-NP-Za-km-z]{22}$",
+            "description": "Keyframe order id (o_ + 22 base58 characters), from the paid response"
+          },
+          "access_token": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{43}$",
+            "description": "access_token from the paid response or keyframe_orders (private order details)"
+          },
+          "wait_s": {
+            "default": 0,
+            "description": "wait up to this many seconds for a change",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 6
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "quote",
+              "order"
+            ]
+          },
+          "envelope": {
+            "type": "string",
+            "enum": [
+              "NOT SEALED",
+              "SEALED",
+              "IN REVIEW",
+              "KEY PUBLISHED",
+              "RETURNED",
+              "UNKNOWN"
+            ]
+          },
+          "meaning": {
+            "type": "string",
+            "maxLength": 300
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 800
+          },
+          "quote": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "quote_id": {
+                    "type": "string"
+                  },
+                  "quote_status": {
+                    "type": "string",
+                    "enum": [
+                      "draft",
+                      "final",
+                      "paid",
+                      "expired",
+                      "cancelled"
+                    ]
+                  },
+                  "payable": {
+                    "type": "boolean"
+                  },
+                  "summary": {
+                    "type": "string",
+                    "maxLength": 600
+                  },
+                  "tier": {
+                    "type": "string",
+                    "enum": [
+                      "instant",
+                      "studio"
+                    ]
+                  },
+                  "format": {
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  "price": {
+                    "type": "object",
+                    "properties": {
+                      "atomic": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]{0,77})$"
+                      },
+                      "usdc": {
+                        "type": "string",
+                        "maxLength": 32
+                      }
+                    },
+                    "required": [
+                      "atomic",
+                      "usdc"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "eta_s": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "quote_expires_at": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "deadline": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "deadline_utc": {
+                    "type": "string",
+                    "maxLength": 40
+                  },
+                  "preview": {
+                    "type": "object",
+                    "properties": {
+                      "still_url": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "maxLength": 600
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "still_sha256": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^0x[0-9a-f]{64}$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "video_url": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "maxLength": 600
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "frame_ms": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "still_url",
+                      "still_sha256",
+                      "video_url",
+                      "frame_ms"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "escrow": {
+                    "type": "object",
+                    "properties": {
+                      "address": {
+                        "type": "string",
+                        "pattern": "^0x[0-9a-fA-F]{40}$"
+                      },
+                      "code": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "none",
+                              "eip1167",
+                              "other"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "balance_atomic": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]{0,77})$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "derivation": {
+                        "type": "object",
+                        "properties": {
+                          "factory": {
+                            "type": "string",
+                            "pattern": "^0x[0-9a-fA-F]{40}$"
+                          },
+                          "vault_impl": {
+                            "type": "string",
+                            "pattern": "^0x[0-9a-fA-F]{40}$"
+                          },
+                          "vault_impl_source": {
+                            "type": "string",
+                            "enum": [
+                              "argument",
+                              "factory_nonce_1"
+                            ]
+                          },
+                          "init_code_hash": {
+                            "type": "string",
+                            "pattern": "^0x[0-9a-f]{64}$"
+                          },
+                          "salt": {
+                            "type": "string",
+                            "pattern": "^0x[0-9a-f]{64}$"
+                          },
+                          "chain_id": {
+                            "type": "number",
+                            "const": 8453
+                          },
+                          "formula": {
+                            "type": "string",
+                            "maxLength": 400
+                          }
+                        },
+                        "required": [
+                          "factory",
+                          "vault_impl",
+                          "vault_impl_source",
+                          "init_code_hash",
+                          "salt",
+                          "chain_id",
+                          "formula"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "address",
+                      "code",
+                      "balance_atomic",
+                      "derivation"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "terms": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "terms_hash": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-f]{64}$"
+                  },
+                  "spec_hash": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-f]{64}$"
+                  },
+                  "delivery": {
+                    "type": "string",
+                    "enum": [
+                      "public",
+                      "private"
+                    ]
+                  },
+                  "route": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "x402",
+                              "direct",
+                              "fund_first"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string",
+                            "maxLength": 600
+                          },
+                          "wallet": {
+                            "type": "object",
+                            "properties": {
+                              "address": {
+                                "type": "string",
+                                "pattern": "^0x[0-9a-fA-F]{40}$"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "plain",
+                                  "delegated",
+                                  "contract",
+                                  "unknown"
+                                ]
+                              },
+                              "delegate": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "usdc_atomic": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "pattern": "^(0|[1-9][0-9]{0,77})$"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "eth_wei": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "pattern": "^(0|[1-9][0-9]{0,77})$"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "shortfall_atomic": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "pattern": "^(0|[1-9][0-9]{0,77})$"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "consistent": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "address",
+                              "kind",
+                              "delegate",
+                              "usdc_atomic",
+                              "eth_wei",
+                              "shortfall_atomic",
+                              "consistent"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "reason",
+                          "wallet"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "checks": {
+                    "maxItems": 40,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "maxLength": 40
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "pass",
+                            "fail",
+                            "warn",
+                            "skip"
+                          ]
+                        },
+                        "detail": {
+                          "type": "string",
+                          "maxLength": 400
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "status",
+                        "detail"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "disclosures": {
+                    "maxItems": 12,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "maxLength": 500
+                    }
+                  },
+                  "retry_after_ms": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "next": {
+                    "type": "object",
+                    "properties": {
+                      "tool": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "maxLength": 64
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "input": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {}
+                      },
+                      "note": {
+                        "type": "string",
+                        "maxLength": 800
+                      }
+                    },
+                    "required": [
+                      "tool",
+                      "input",
+                      "note"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "quote_id",
+                  "quote_status",
+                  "payable",
+                  "summary",
+                  "tier",
+                  "format",
+                  "price",
+                  "eta_s",
+                  "quote_expires_at",
+                  "deadline",
+                  "deadline_utc",
+                  "preview",
+                  "escrow",
+                  "terms",
+                  "terms_hash",
+                  "spec_hash",
+                  "delivery",
+                  "route",
+                  "checks",
+                  "disclosures",
+                  "retry_after_ms",
+                  "next"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "order": {
+            "anyOf": [
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "onchain": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "factory": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                  },
+                  "terms_hash": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-f]{64}$"
+                  },
+                  "escrow": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                  },
+                  "status": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "None",
+                          "Open",
+                          "Delivered",
+                          "Released",
+                          "Refunded",
+                          "Cancelled",
+                          "Rejected"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "escrow_code": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "none",
+                          "eip1167",
+                          "other"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "escrow_balance_atomic": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]{0,77})$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "deadline": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "delivered_at": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "final_at": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "key_published": {
+                    "type": "boolean"
+                  },
+                  "to_seller_atomic": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]{0,77})$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "to_buyer_atomic": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]{0,77})$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "rpcs_answered": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "rpcs_configured": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "consistent": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "factory",
+                  "terms_hash",
+                  "escrow",
+                  "status",
+                  "escrow_code",
+                  "escrow_balance_atomic",
+                  "deadline",
+                  "delivered_at",
+                  "final_at",
+                  "key_published",
+                  "to_seller_atomic",
+                  "to_buyer_atomic",
+                  "rpcs_answered",
+                  "rpcs_configured",
+                  "consistent"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "poll_after_s": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "next": {
+            "type": "object",
+            "properties": {
+              "tool": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "input": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "note": {
+                "type": "string",
+                "maxLength": 800
+              }
+            },
+            "required": [
+              "tool",
+              "input",
+              "note"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "kind",
+          "envelope",
+          "meaning",
+          "summary",
+          "quote",
+          "order",
+          "onchain",
+          "poll_after_s",
+          "next"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "keyframe_verify",
+      "title": "Keyframe · 4. verify delivery independently (free)",
+      "description": "Proves an order's state from Base and public storage instead of trusting Keyframe's server. It recomputes the escrow address from the terms and checks the funding transfer and the escrow's balance and code on two Base RPCs. After delivery it reads the key from the escrow factory's on-chain record, downloads the encrypted file, decrypts it here, and checks its fingerprint, length and resolution against the terms. mode derive works offline (escrow math only); funding checks the payment; delivery checks the key and the file. Accepts the paid response from get_request, or quote_id/order_id (+ tx_hash for direct payments), or the terms themselves. Free; moves no money. Report each check to the user.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "derive",
+              "funding",
+              "delivery"
+            ],
+            "description": "derive: offline escrow math; funding: is the money sealed; delivery: is the key published and the file intact"
+          },
+          "terms": {
+            "type": "object",
+            "properties": {
+              "buyer": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              "seller": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              "operator": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              "token": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              "amount": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]{0,77})$"
+              },
+              "dueAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "deadline": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "reviewWindow": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4294967295
+              },
+              "slaFloorBps": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 65535
+              },
+              "killFeeBps": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 65535
+              },
+              "keyHash": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{64}$"
+              },
+              "specHash": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{64}$"
+              },
+              "contentHash": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{64}$"
+              },
+              "salt": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{64}$"
+              }
+            },
+            "required": [
+              "buyer",
+              "seller",
+              "operator",
+              "token",
+              "amount",
+              "dueAt",
+              "deadline",
+              "reviewWindow",
+              "slaFloorBps",
+              "killFeeBps",
+              "keyHash",
+              "specHash",
+              "contentHash",
+              "salt"
+            ],
+            "additionalProperties": false,
+            "description": "Terms v1 JSON exactly as in the quote (amount is atomic USDC)"
+          },
+          "factory": {
+            "description": "escrow factory address (required with terms in derive mode)",
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{40}$"
+          },
+          "vault_impl": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{40}$"
+          },
+          "terms_hash": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{64}$"
+          },
+          "escrow": {
+            "description": "an escrow address to compare against the derivation",
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{40}$"
+          },
+          "quote_id": {
+            "type": "string",
+            "pattern": "^q_[1-9A-HJ-NP-Za-km-z]{22}$",
+            "description": "Keyframe quote id (q_ + 22 base58 characters), from keyframe_quote"
+          },
+          "order_id": {
+            "type": "string",
+            "pattern": "^o_[1-9A-HJ-NP-Za-km-z]{22}$",
+            "description": "Keyframe order id (o_ + 22 base58 characters), from the paid response"
+          },
+          "access_token": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{43}$",
+            "description": "access_token from the paid response or keyframe_orders (private order details)"
+          },
+          "paid_response": {
+            "description": "the paid response (or the whole get_request result) of keyframe_commission",
+            "type": "object",
+            "propertyNames": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "additionalProperties": {}
+          },
+          "tx_hash": {
+            "description": "transaction hash of a direct-rail payment",
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{64}$"
+          },
+          "k_buyer": {
+            "description": "k_buyer of a private order (from the paid response or keyframe_orders)",
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{64}$"
+          },
+          "max_chunks": {
+            "description": "cap on encrypted chunks to download and check",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 64
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "derive",
+              "funding",
+              "delivery"
+            ]
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "verified",
+              "partial",
+              "failed"
+            ]
+          },
+          "envelope": {
+            "type": "string",
+            "enum": [
+              "NOT SEALED",
+              "SEALED",
+              "IN REVIEW",
+              "KEY PUBLISHED",
+              "RETURNED",
+              "UNKNOWN"
+            ]
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 800
+          },
+          "terms_source": {
+            "type": "string",
+            "enum": [
+              "argument",
+              "api",
+              "none"
+            ]
+          },
+          "terms_hash": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^0x[0-9a-f]{64}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "escrow": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "derivation": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "factory": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                  },
+                  "vault_impl": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                  },
+                  "vault_impl_source": {
+                    "type": "string",
+                    "enum": [
+                      "argument",
+                      "factory_nonce_1"
+                    ]
+                  },
+                  "init_code_hash": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-f]{64}$"
+                  },
+                  "salt": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-f]{64}$"
+                  },
+                  "chain_id": {
+                    "type": "number",
+                    "const": 8453
+                  },
+                  "formula": {
+                    "type": "string",
+                    "maxLength": 400
+                  }
+                },
+                "required": [
+                  "factory",
+                  "vault_impl",
+                  "vault_impl_source",
+                  "init_code_hash",
+                  "salt",
+                  "chain_id",
+                  "formula"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "payout": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "at_due": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]{0,77})$"
+                  },
+                  "at_deadline": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]{0,77})$"
+                  }
+                },
+                "required": [
+                  "at_due",
+                  "at_deadline"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "checks": {
+            "maxItems": 60,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "maxLength": 40
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "pass",
+                    "fail",
+                    "warn",
+                    "skip"
+                  ]
+                },
+                "detail": {
+                  "type": "string",
+                  "maxLength": 400
+                }
+              },
+              "required": [
+                "id",
+                "status",
+                "detail"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "onchain": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "factory": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                  },
+                  "terms_hash": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-f]{64}$"
+                  },
+                  "escrow": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                  },
+                  "status": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "None",
+                          "Open",
+                          "Delivered",
+                          "Released",
+                          "Refunded",
+                          "Cancelled",
+                          "Rejected"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "escrow_code": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "none",
+                          "eip1167",
+                          "other"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "escrow_balance_atomic": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]{0,77})$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "deadline": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "delivered_at": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "final_at": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "key_published": {
+                    "type": "boolean"
+                  },
+                  "to_seller_atomic": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]{0,77})$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "to_buyer_atomic": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]{0,77})$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "rpcs_answered": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "rpcs_configured": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "consistent": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "factory",
+                  "terms_hash",
+                  "escrow",
+                  "status",
+                  "escrow_code",
+                  "escrow_balance_atomic",
+                  "deadline",
+                  "delivered_at",
+                  "final_at",
+                  "key_published",
+                  "to_seller_atomic",
+                  "to_buyer_atomic",
+                  "rpcs_answered",
+                  "rpcs_configured",
+                  "consistent"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "delivery": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "manifest_hash": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-f]{64}$"
+                  },
+                  "chunks_total": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "chunks_verified": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "bytes_total": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "media": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "width": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "height": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "duration_ms": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "width",
+                          "height",
+                          "duration_ms"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "manifest_url": {
+                    "type": "string",
+                    "maxLength": 600
+                  }
+                },
+                "required": [
+                  "manifest_hash",
+                  "chunks_total",
+                  "chunks_verified",
+                  "bytes_total",
+                  "media",
+                  "manifest_url"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "next": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "tool": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 64
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "input": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "note": {
+                    "type": "string",
+                    "maxLength": 800
+                  }
+                },
+                "required": [
+                  "tool",
+                  "input",
+                  "note"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "mode",
+          "verdict",
+          "envelope",
+          "summary",
+          "terms_source",
+          "terms_hash",
+          "escrow",
+          "derivation",
+          "payout",
+          "checks",
+          "onchain",
+          "delivery",
+          "next"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "keyframe_refund",
+      "title": "Keyframe · return funds after deadline (fallback)",
+      "description": "Fallback only. Refunds are automatic: after the deadline, Keyframe's keepers (or anyone) return the escrowed USDC to the buyer. If keyframe_status still shows funds in escrow after the deadline, this proposes the same public refund call from the buyer's wallet (one approval, needs a little ETH on Base). The money can only go to the buyer. action sweep returns late or extra funds after an order has settled; action reject is the buyer's own Studio-review rejection. Refuses with the exact time when an action is not allowed yet.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "refund",
+              "sweep",
+              "reject"
+            ],
+            "description": "refund: after the deadline; sweep: late or extra funds; reject: Studio review rejection (buyer only)"
+          },
+          "terms": {
+            "type": "object",
+            "properties": {
+              "buyer": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              "seller": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              "operator": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              "token": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              "amount": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]{0,77})$"
+              },
+              "dueAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "deadline": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "reviewWindow": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4294967295
+              },
+              "slaFloorBps": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 65535
+              },
+              "killFeeBps": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 65535
+              },
+              "keyHash": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{64}$"
+              },
+              "specHash": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{64}$"
+              },
+              "contentHash": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{64}$"
+              },
+              "salt": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{64}$"
+              }
+            },
+            "required": [
+              "buyer",
+              "seller",
+              "operator",
+              "token",
+              "amount",
+              "dueAt",
+              "deadline",
+              "reviewWindow",
+              "slaFloorBps",
+              "killFeeBps",
+              "keyHash",
+              "specHash",
+              "contentHash",
+              "salt"
+            ],
+            "additionalProperties": false,
+            "description": "Terms v1 JSON exactly as in the quote (amount is atomic USDC)"
+          },
+          "factory": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{40}$"
+          },
+          "quote_id": {
+            "type": "string",
+            "pattern": "^q_[1-9A-HJ-NP-Za-km-z]{22}$",
+            "description": "Keyframe quote id (q_ + 22 base58 characters), from keyframe_quote"
+          },
+          "order_id": {
+            "type": "string",
+            "pattern": "^o_[1-9A-HJ-NP-Za-km-z]{22}$",
+            "description": "Keyframe order id (o_ + 22 base58 characters), from the paid response"
+          },
+          "access_token": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{43}$",
+            "description": "access_token from the paid response or keyframe_orders (private order details)"
+          },
+          "token": {
+            "description": "sweep only: asset to return (default the deal's USDC; 0x0…0 for ETH)",
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{40}$"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "io.paybox/transactionProposal": {
+            "type": "object",
+            "properties": {
+              "version": {
+                "type": "string",
+                "const": "1"
+              },
+              "expiresAt": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+              },
+              "kind": {
+                "type": "string",
+                "const": "evm"
+              },
+              "chain": {
+                "type": "string",
+                "pattern": "^eip155:(0|[1-9][0-9]*)$"
+              },
+              "transaction": {
+                "type": "object",
+                "properties": {
+                  "to": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                  },
+                  "value": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]{0,77})$"
+                  },
+                  "data": {
+                    "type": "string",
+                    "pattern": "^0x(?:[0-9a-fA-F]{2})*$"
+                  }
+                },
+                "required": [
+                  "to",
+                  "value",
+                  "data"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "version",
+              "expiresAt",
+              "kind",
+              "chain",
+              "transaction"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "io.paybox/transactionProposal"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "keyframe_review",
+      "title": "Keyframe · Studio review: accept, changes or reject",
+      "description": "For Studio orders whose watermarked preview is ready. decision: accept (pay the designer now), changes (one revision) or reject (refund to the buyer, minus the kill fee in the deal, if any). The first call returns an EIP-712 message. Confirm with the user, sign it with request_wallet_sign (no gas; moves no money by itself), then call again with the signature and sig_deadline. This plugin only passes on messages for Keyframe's own escrow contract. Doing nothing until the review window ends counts as accept.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "pattern": "^o_[1-9A-HJ-NP-Za-km-z]{22}$",
+            "description": "Keyframe order id (o_ + 22 base58 characters), from the paid response"
+          },
+          "access_token": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{43}$",
+            "description": "access_token from the paid response or keyframe_orders (private order details)"
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "accept",
+              "changes",
+              "reject"
+            ]
+          },
+          "signature": {
+            "description": "the request_wallet_sign result for the typed data from the first call",
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{2,2048}$"
+          },
+          "sig_deadline": {
+            "description": "message.deadline of that typed data",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "order_id",
+          "access_token",
+          "decision"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "stage": {
+            "type": "string",
+            "enum": [
+              "sign",
+              "submitted"
+            ]
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "accept",
+              "changes",
+              "reject"
+            ]
+          },
+          "order_id": {
+            "type": "string"
+          },
+          "typed_data": {
+            "anyOf": [
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sign_with": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sig_deadline": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "signer": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tx": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 800
+          }
+        },
+        "required": [
+          "stage",
+          "decision",
+          "order_id",
+          "typed_data",
+          "sign_with",
+          "sig_deadline",
+          "signer",
+          "tx",
+          "status",
+          "note"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "keyframe_orders",
+      "title": "Keyframe · find my orders (free)",
+      "description": "Lists a buyer's Keyframe orders with fresh access links, for use in a new chat. The first call returns a sign-in message (EIP-4361) for request_wallet_sign; call again with the message and the signature. This plugin checks that the message signs in to Keyframe only. Free; moves no money.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "address": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{40}$",
+            "description": "the buyer wallet address"
+          },
+          "message": {
+            "description": "the sign-in message from the first call, unchanged",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          },
+          "signature": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{2,2048}$"
+          }
+        },
+        "required": [
+          "address"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "stage": {
+            "type": "string",
+            "enum": [
+              "sign",
+              "signed_in"
+            ]
+          },
+          "address": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{40}$"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2048
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sign_with": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "orders": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            }
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 800
+          },
+          "next": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "tool": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 64
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "input": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "note": {
+                    "type": "string",
+                    "maxLength": 800
+                  }
+                },
+                "required": [
+                  "tool",
+                  "input",
+                  "note"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "stage",
+          "address",
+          "message",
+          "sign_with",
+          "orders",
+          "note",
+          "next"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

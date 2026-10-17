@@ -1,0 +1,110 @@
+<!doctype html>
+<!-- probe: REFERENCE IMPLEMENTATION - replace with the builder's own design.
+     A 2 s test card for synthetic monitoring. Frame N shows "F NN" and "T+N/fps", so a decoded frame can be
+     checked against its index. Stamped per job by apps/worker (see templates/README.md). -->
+<html lang="en" data-composition-variables="{{KF_VARIABLES}}">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width={{KF_WIDTH}}, height={{KF_HEIGHT}}" />
+    <title>probe {{KF_TEMPLATE_VERSION}} (reference)</title>
+    <link rel="stylesheet" href="kit/styles/tokens.css" />
+    <link rel="stylesheet" href="styles/{{KF_STYLE}}.css" />
+    <style>
+      @font-face {
+        font-family: 'KF Reference Sans';
+        src: url('kit/fonts/reference-sans/inter-latin-wght-normal.woff2') format('woff2');
+        font-weight: 100 900;
+        font-style: normal;
+        font-display: block;
+      }
+      body {
+        margin: 0;
+        background: #000;
+      }
+    </style>
+    <script src="kit/vendor/gsap.min.js"></script>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-width="{{KF_WIDTH}}"
+      data-height="{{KF_HEIGHT}}"
+      data-duration="{{KF_DURATION}}"
+      data-kf-aspect="{{KF_ASPECT}}"
+      data-kf-aspect-ratio="{{KF_ASPECT_RATIO}}"
+      data-kf-fps="{{KF_FPS}}"
+    >
+      <section id="pr-card" class="pr-card">
+        <div class="pr-bars">
+          <div class="pr-bar"></div>
+          <div class="pr-bar"></div>
+          <div class="pr-bar"></div>
+          <div class="pr-bar"></div>
+          <div class="pr-bar"></div>
+          <div class="pr-bar"></div>
+          <div class="pr-bar"></div>
+        </div>
+        <div class="pr-middle">
+          <p class="pr-title">KEYFRAME PROBE</p>
+          <p id="pr-id" class="pr-id" data-var-text="probe_id">probe-0000</p>
+          <p id="pr-frame" class="pr-frame">F 00</p>
+          <p id="pr-time" class="pr-time">T+0.000 s</p>
+          <p id="pr-info" class="pr-info">-</p>
+        </div>
+        <div id="pr-sweep-track" class="pr-sweep-track"><div id="pr-sweep" class="pr-sweep"></div></div>
+      </section>
+      <div class="pr-corner tl"></div>
+      <div class="pr-corner tr"></div>
+      <div class="pr-corner bl"></div>
+      <div class="pr-corner br"></div>
+    </div>
+    <script>
+      (function () {
+        var root = document.getElementById("root");
+        var duration = Number(root.getAttribute("data-duration"));
+        var fps = Number(root.getAttribute("data-kf-fps"));
+        var frames = Math.round(duration * fps);
+        var frameEl = document.getElementById("pr-frame");
+        var timeEl = document.getElementById("pr-time");
+        var digits = String(frames - 1).length;
+
+        function pad(n, width) {
+          var s = String(n);
+          while (s.length < width) s = "0" + s;
+          return s;
+        }
+        function frameText(i) {
+          return "F " + pad(i, digits);
+        }
+        function timeText(i) {
+          return "T+" + (i / fps).toFixed(3) + " s";
+        }
+
+        document.getElementById("pr-info").textContent =
+          root.getAttribute("data-width") + "×" + root.getAttribute("data-height") + " · " +
+          root.getAttribute("data-kf-aspect-ratio") + " · " + fps + " fps · " + duration + " s";
+        frameEl.textContent = frameText(0);
+        timeEl.textContent = timeText(0);
+
+        function build() {
+          var track = document.getElementById("pr-sweep-track");
+          var sweep = document.getElementById("pr-sweep");
+          var travel = track.clientWidth - sweep.offsetWidth - 4;
+
+          var tl = gsap.timeline({ paused: true });
+          tl.fromTo("#pr-sweep", { x: 0 }, { x: travel, duration: duration, ease: "none" }, 0);
+          // One set per output frame, placed at the frame's own time.
+          for (var i = 1; i < frames; i++) {
+            tl.set(frameEl, { textContent: frameText(i) }, i / fps);
+            tl.set(timeEl, { textContent: timeText(i) }, i / fps);
+          }
+          window.__timelines["main"] = tl;
+        }
+
+        document.fonts.load("700 100px 'KF Reference Sans'").then(build, build);
+      })();
+    </script>
+  </body>
+</html>

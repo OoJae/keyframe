@@ -1,0 +1,29 @@
+{
+  "$schema": "../template.schema.json",
+  "id": "probe",
+  "version": "0.1.0",
+  "format": "catalog",
+  "status": "reference",
+  "title": "Probe test card, 2 s (REFERENCE IMPLEMENTATION)",
+  "styles": ["probe"],
+  "aspects": {
+    "9:16": { "width": 1080, "height": 1920 },
+    "1:1": { "width": 1080, "height": 1080 },
+    "16:9": { "width": 1920, "height": 1080 }
+  },
+  "fps": 30,
+  "durations": [2],
+  "heroTime": { "2": 1 },
+  "perf": { "renderBudgetS": 20, "stillBudgetS": 4.5 },
+  "variables": [
+    {
+      "id": "probe_id",
+      "type": "string",
+      "label": "Probe run id",
+      "default": "probe-0000",
+      "minLength": 1,
+      "maxLength": 32,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    }
+  ]
+}

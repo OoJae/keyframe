@@ -1,0 +1,10 @@
+{
+  "//": "Portability gate: all of src/ against the Workers runtime types only (no Node, no DOM). @keyframe/protocol is consumed through declarations emitted by `pnpm typecheck` into .types/ (its sources are checked by the protocol package; @cloudflare/workers-types declares TextDecoder/TextEncoder slightly differently).",
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": ["@cloudflare/workers-types"],
+    "paths": { "@keyframe/protocol": ["./.types/protocol/index.d.ts"] }
+  },
+  "include": ["src/**/*.ts"]
+}

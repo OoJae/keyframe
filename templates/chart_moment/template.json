@@ -1,0 +1,163 @@
+{
+  "$schema": "../template.schema.json",
+  "id": "chart_moment",
+  "version": "0.0.0",
+  "format": "chart_moment",
+  "status": "awaiting-design",
+  "title": "Chart Moment (AWAITING DESIGN)",
+  "styles": [],
+  "aspects": {
+    "9:16": {
+      "width": 1080,
+      "height": 1920
+    },
+    "1:1": {
+      "width": 1080,
+      "height": 1080
+    },
+    "16:9": {
+      "width": 1920,
+      "height": 1080
+    }
+  },
+  "fps": 30,
+  "durations": [
+    10
+  ],
+  "heroTime": {
+    "10": 7.5
+  },
+  "perf": {
+    "renderBudgetS": 75,
+    "stillBudgetS": 4.5
+  },
+  "variables": [
+    {
+      "id": "asset_label",
+      "type": "string",
+      "label": "Asset label",
+      "default": "ETH",
+      "minLength": 1,
+      "maxLength": 24
+    },
+    {
+      "id": "window",
+      "type": "enum",
+      "label": "Window",
+      "default": "7d",
+      "options": [
+        {
+          "value": "24h",
+          "label": "24h"
+        },
+        {
+          "value": "7d",
+          "label": "7d"
+        },
+        {
+          "value": "30d",
+          "label": "30d"
+        },
+        {
+          "value": "90d",
+          "label": "90d"
+        },
+        {
+          "value": "1y",
+          "label": "1y"
+        }
+      ]
+    },
+    {
+      "id": "callout",
+      "type": "string",
+      "label": "Callout (empty = none)",
+      "default": "",
+      "maxLength": 40
+    },
+    {
+      "id": "mark",
+      "type": "enum",
+      "label": "Marked point",
+      "default": "change",
+      "options": [
+        {
+          "value": "change",
+          "label": "change"
+        },
+        {
+          "value": "high",
+          "label": "high"
+        },
+        {
+          "value": "low",
+          "label": "low"
+        },
+        {
+          "value": "none",
+          "label": "none"
+        }
+      ]
+    },
+    {
+      "id": "series_json",
+      "type": "string",
+      "label": "JSON array of at most 512 integer prices (fixed point, see price_decimals), fetched and hashed by the API",
+      "default": "[100,101,99,104]",
+      "maxLength": 16384,
+      "json": true
+    },
+    {
+      "id": "price_decimals",
+      "type": "number",
+      "label": "Decimals of series_json values",
+      "default": 0,
+      "integer": true,
+      "min": 0,
+      "max": 8
+    },
+    {
+      "id": "change_bp",
+      "type": "number",
+      "label": "Window change in basis points",
+      "default": 0,
+      "integer": true,
+      "min": -10000,
+      "max": 10000000
+    },
+    {
+      "id": "last_price_text",
+      "type": "string",
+      "label": "Last price, formatted by the API",
+      "default": "$0",
+      "maxLength": 24
+    },
+    {
+      "id": "bg",
+      "type": "color",
+      "label": "Background (resolved from the palette preset or custom palette)",
+      "default": "#101010"
+    },
+    {
+      "id": "fg",
+      "type": "color",
+      "label": "Foreground",
+      "default": "#f0f0f0"
+    },
+    {
+      "id": "accent",
+      "type": "color",
+      "label": "Accent",
+      "default": "#9a9a9a"
+    },
+    {
+      "id": "seed",
+      "type": "number",
+      "label": "PRNG seed: first 4 bytes of specHash as an unsigned integer",
+      "default": 0,
+      "integer": true,
+      "min": 0,
+      "max": 4294967295
+    }
+  ]
+}

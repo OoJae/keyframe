@@ -1,0 +1,21 @@
+# Test-only Foundry project for test/anvil.e2e.test.ts: builds the real escrow factory from ../../../../contracts
+# plus a USDC mock that also has FiatTokenV2_2's (v, r, s) transferWithAuthorization overload, which x402's
+# exact verifier simulates. Output stays here (git-ignored).
+[profile.default]
+src = "src"
+out = "out"
+cache_path = "cache"
+libs = []
+solc = "0.8.30"
+auto_detect_solc = false
+evm_version = "cancun"
+optimizer = true
+optimizer_runs = 10_000
+bytecode_hash = "none"
+cbor_metadata = false
+offline = true
+remappings = [
+  "@openzeppelin/contracts/=../../../../contracts/lib/openzeppelin-contracts/contracts/",
+  "keyframe/=../../../../contracts/",
+]
+allow_paths = ["../../../../contracts"]

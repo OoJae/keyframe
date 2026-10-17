@@ -1,0 +1,9 @@
+{
+  "//": "Portability gate: src must typecheck WITHOUT Node types (WebCrypto/TextEncoder/atob only), so it bundles for Workers and the plugin.",
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM"],
+    "types": []
+  },
+  "include": ["src/**/*.ts"]
+}

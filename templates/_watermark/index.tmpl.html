@@ -1,0 +1,53 @@
+<!doctype html>
+<!-- _watermark: REFERENCE IMPLEMENTATION - replace with the builder's own design.
+     Authored as WHITE on BLACK. The worker snapshots it once per aspect and turns brightness into alpha
+     (alpha = luma x overlay.opacity), then composites the tile over quote-time stills and 540p previews. -->
+<html lang="en" data-composition-variables="{{KF_VARIABLES}}">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width={{KF_WIDTH}}, height={{KF_HEIGHT}}" />
+    <title>watermark {{KF_TEMPLATE_VERSION}} (reference)</title>
+    <link rel="stylesheet" href="styles/{{KF_STYLE}}.css" />
+    <style>
+      @font-face {
+        font-family: 'KF Reference Sans';
+        src: url('kit/fonts/reference-sans/inter-latin-wght-normal.woff2') format('woff2');
+        font-weight: 100 900;
+        font-style: normal;
+        font-display: block;
+      }
+      body {
+        margin: 0;
+        background: #000;
+      }
+    </style>
+    <script src="kit/vendor/gsap.min.js"></script>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-width="{{KF_WIDTH}}"
+      data-height="{{KF_HEIGHT}}"
+      data-duration="{{KF_DURATION}}"
+      data-kf-aspect="{{KF_ASPECT}}"
+    >
+      <div id="wm-rows" class="wm-rows" data-layout-allow-overflow></div>
+      <p class="wm-badge">SEALED UNTIL PAID</p>
+    </div>
+    <script>
+      (function () {
+        var rows = document.getElementById("wm-rows");
+        var text = "KEYFRAME · PREVIEW · KEYFRAME · PREVIEW · KEYFRAME · PREVIEW";
+        for (var i = 0; i < 14; i++) {
+          var p = document.createElement("p");
+          p.className = "wm-row";
+          p.textContent = text;
+          rows.appendChild(p);
+        }
+        window.__timelines["main"] = gsap.timeline({ paused: true });
+      })();
+    </script>
+  </body>
+</html>

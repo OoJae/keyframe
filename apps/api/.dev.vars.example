@@ -1,0 +1,15 @@
+# Local secrets for `wrangler dev` (copy to .dev.vars, which is git-ignored). Never commit real values.
+# Generate fresh ones:
+#   KMASTER / ACCESS_SECRET:  openssl rand -hex 32
+#   WORKER_TOKEN:             openssl rand -base64 48 | tr -d '\n=/+'
+#   RELAYER_PRIVATE_KEY:      cast wallet new   (a dedicated hot key; fund it with a little Base ETH only)
+KMASTER=<64+ hex chars>
+ACCESS_SECRET=<64+ hex chars>
+WORKER_TOKEN=<at least 32 random chars>
+RELAYER_PRIVATE_KEY=0x<64 hex chars>
+
+# Optional overrides for local chains (anvil fork of Base, see README "Local interop"):
+# RPC_URL=http://127.0.0.1:8545
+# FACTORY_ADDRESS=0x...
+# SELLER_ADDRESS=0x...
+# PUBLIC_BASE_URL=http://localhost:8787

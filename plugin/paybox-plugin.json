@@ -1,6 +1,23 @@
 {
-  "tool": "echo",
+  "tool": "keyframe_verify",
   "arguments": {
-    "message": "hello paybox"
+    "mode": "derive",
+    "factory": "0x00000000000000000000000000000000000f4c70",
+    "terms": {
+      "buyer": "0x1111111111111111111111111111111111111111",
+      "seller": "0x2222222222222222222222222222222222222222",
+      "operator": "0x3333333333333333333333333333333333333333",
+      "token": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "amount": "4000000",
+      "dueAt": 0,
+      "deadline": 1798761600,
+      "reviewWindow": 0,
+      "slaFloorBps": 10000,
+      "killFeeBps": 0,
+      "keyHash": "0x4b2bd1e1a2c7a3b0d7c4f2b8e9a6d5c4b3a2918f7e6d5c4b3a2918f7e6d5c4b3",
+      "specHash": "0x9e1c7d3a5b2f4e6c8a0b1d3f5e7c9a2b4d6f8e0a1c3e5b7d9f2a4c6e8b0d1f3a",
+      "contentHash": "0x5d41402abc4b2a76b9719d911017c592ae2fd8e1c3e5b7d9f2a4c6e8b0d1f3a9",
+      "salt": "0x6a1f0c2e4b7d9a3c5e8f1b2d4a6c8e0f3b5d7a9c1e2f4b6d8a0c3e5f7b9d1a2c"
+    }
   }
 }

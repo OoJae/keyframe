@@ -1,0 +1,88 @@
+{
+  "$schema": "../template.schema.json",
+  "id": "launch_sting",
+  "version": "0.0.0",
+  "format": "launch_sting",
+  "status": "awaiting-design",
+  "title": "Launch Sting (AWAITING DESIGN)",
+  "styles": [],
+  "aspects": {
+    "9:16": {
+      "width": 1080,
+      "height": 1920
+    },
+    "1:1": {
+      "width": 1080,
+      "height": 1080
+    },
+    "16:9": {
+      "width": 1920,
+      "height": 1080
+    }
+  },
+  "fps": 30,
+  "durations": [
+    6,
+    10
+  ],
+  "heroTime": {
+    "6": 3.4,
+    "10": 5
+  },
+  "perf": {
+    "renderBudgetS": 45,
+    "stillBudgetS": 4.5
+  },
+  "variables": [
+    {
+      "id": "wordmark",
+      "type": "string",
+      "label": "Wordmark",
+      "default": "Wordmark",
+      "minLength": 1,
+      "maxLength": 24
+    },
+    {
+      "id": "tagline",
+      "type": "string",
+      "label": "Tagline (empty = none)",
+      "default": "",
+      "maxLength": 60
+    },
+    {
+      "id": "logo_src",
+      "type": "string",
+      "label": "Logo file inside the job (assets/<name>), downloaded and checked by the worker; empty = none",
+      "default": "",
+      "maxLength": 72,
+      "pattern": "^(assets/[a-z0-9][a-z0-9_.-]{0,63})?$"
+    },
+    {
+      "id": "bg",
+      "type": "color",
+      "label": "Background (resolved from the palette preset or custom palette)",
+      "default": "#101010"
+    },
+    {
+      "id": "fg",
+      "type": "color",
+      "label": "Foreground",
+      "default": "#f0f0f0"
+    },
+    {
+      "id": "accent",
+      "type": "color",
+      "label": "Accent",
+      "default": "#9a9a9a"
+    },
+    {
+      "id": "seed",
+      "type": "number",
+      "label": "PRNG seed: first 4 bytes of specHash as an unsigned integer",
+      "default": 0,
+      "integer": true,
+      "min": 0,
+      "max": 4294967295
+    }
+  ]
+}

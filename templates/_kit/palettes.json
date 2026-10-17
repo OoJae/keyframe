@@ -1,0 +1,8 @@
+{
+  "//": "TODO(builder): the five palette presets the quote schema names (product-render-demo A3). Each is {bg, fg, accent} as #rrggbb with fg/bg contrast >= 4.5:1. null = not designed yet: the worker then renders the template's own default colours.",
+  "void": null,
+  "paper": null,
+  "signal": null,
+  "mono": null,
+  "ember": null
+}

@@ -1,0 +1,352 @@
+// Hand-written JSON ABIs for the frozen contract surface (§3), so viem infers exact argument/return types.
+// internalType is omitted; diff against `forge inspect <Contract> abi` ignoring it.
+
+const termsComponents = [
+  { name: "buyer", type: "address" },
+  { name: "seller", type: "address" },
+  { name: "operator", type: "address" },
+  { name: "token", type: "address" },
+  { name: "amount", type: "uint256" },
+  { name: "dueAt", type: "uint64" },
+  { name: "deadline", type: "uint64" },
+  { name: "reviewWindow", type: "uint32" },
+  { name: "slaFloorBps", type: "uint16" },
+  { name: "killFeeBps", type: "uint16" },
+  { name: "keyHash", type: "bytes32" },
+  { name: "specHash", type: "bytes32" },
+  { name: "contentHash", type: "bytes32" },
+  { name: "salt", type: "bytes32" },
+] as const;
+
+const termsParam = { name: "t", type: "tuple", components: termsComponents } as const;
+
+const orderViewComponents = [
+  { name: "status", type: "uint8" },
+  { name: "buyer", type: "address" },
+  { name: "deadline", type: "uint64" },
+  { name: "reviewWindow", type: "uint32" },
+  { name: "openedAt", type: "uint64" },
+  { name: "deliveredAt", type: "uint64" },
+  { name: "finalAt", type: "uint64" },
+  { name: "accepted", type: "bool" },
+  { name: "key", type: "bytes32" },
+  { name: "manifestHash", type: "bytes32" },
+  { name: "toSeller", type: "uint256" },
+  { name: "toBuyer", type: "uint256" },
+] as const;
+
+const view = <const N extends string, const T extends string>(name: N, type: T) =>
+  ({ type: "function", name, stateMutability: "view", inputs: [], outputs: [{ name: "", type }] }) as const;
+
+export const keyframeFactoryAbi = [
+  {
+    type: "constructor",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "usdc", type: "address" },
+      { name: "seller", type: "address" },
+    ],
+  },
+  // immutables / constants
+  view("USDC", "address"),
+  view("SELLER", "address"),
+  view("VAULT_IMPL", "address"),
+  view("MIN_AMOUNT", "uint256"),
+  view("MAX_AMOUNT", "uint256"),
+  view("MAX_LIFETIME", "uint64"),
+  view("RELEASE_GRACE", "uint64"),
+  // views
+  {
+    type: "function",
+    name: "hashTerms",
+    stateMutability: "view",
+    inputs: [termsParam],
+    outputs: [{ name: "", type: "bytes32" }],
+  },
+  {
+    type: "function",
+    name: "escrowOf",
+    stateMutability: "view",
+    inputs: [{ name: "termsHash", type: "bytes32" }],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
+    type: "function",
+    name: "payoutAt",
+    stateMutability: "pure",
+    inputs: [termsParam, { name: "ts", type: "uint256" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "order",
+    stateMutability: "view",
+    inputs: [{ name: "termsHash", type: "bytes32" }],
+    outputs: [{ name: "", type: "tuple", components: orderViewComponents }],
+  },
+  {
+    type: "function",
+    name: "registryLength",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "refundableCount",
+    stateMutability: "view",
+    inputs: [{ name: "maxScan", type: "uint256" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    // ERC-5267 (OZ EIP712)
+    type: "function",
+    name: "eip712Domain",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [
+      { name: "fields", type: "bytes1" },
+      { name: "name", type: "string" },
+      { name: "version", type: "string" },
+      { name: "chainId", type: "uint256" },
+      { name: "verifyingContract", type: "address" },
+      { name: "salt", type: "bytes32" },
+      { name: "extensions", type: "uint256[]" },
+    ],
+  },
+  // funding / registration (anyone)
+  {
+    type: "function",
+    name: "fundWithAuthorization",
+    stateMutability: "nonpayable",
+    inputs: [
+      termsParam,
+      { name: "validAfter", type: "uint256" },
+      { name: "validBefore", type: "uint256" },
+      { name: "nonce", type: "bytes32" },
+      { name: "signature", type: "bytes" },
+    ],
+    outputs: [],
+  },
+  { type: "function", name: "register", stateMutability: "nonpayable", inputs: [termsParam], outputs: [] },
+  // seller side
+  {
+    type: "function",
+    name: "release",
+    stateMutability: "nonpayable",
+    inputs: [
+      termsParam,
+      { name: "key", type: "bytes32" },
+      { name: "charge", type: "uint256" },
+      { name: "manifestHash", type: "bytes32" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "deliver",
+    stateMutability: "nonpayable",
+    inputs: [termsParam, { name: "manifestHash", type: "bytes32" }],
+    outputs: [],
+  },
+  { type: "function", name: "cancel", stateMutability: "nonpayable", inputs: [termsParam], outputs: [] },
+  // buyer side
+  {
+    type: "function",
+    name: "decide",
+    stateMutability: "nonpayable",
+    inputs: [termsParam, { name: "accept", type: "bool" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "decideBySig",
+    stateMutability: "nonpayable",
+    inputs: [
+      termsParam,
+      { name: "accept", type: "bool" },
+      { name: "sigDeadline", type: "uint256" },
+      { name: "signature", type: "bytes" },
+    ],
+    outputs: [],
+  },
+  // anyone
+  { type: "function", name: "refund", stateMutability: "nonpayable", inputs: [termsParam], outputs: [] },
+  {
+    type: "function",
+    name: "refundExpired",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "maxScan", type: "uint256" }],
+    outputs: [{ name: "refunded", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "sweep",
+    stateMutability: "nonpayable",
+    inputs: [termsParam, { name: "token", type: "address" }],
+    outputs: [],
+  },
+  // events
+  {
+    type: "event",
+    name: "Opened",
+    anonymous: false,
+    inputs: [
+      { name: "termsHash", type: "bytes32", indexed: true },
+      { name: "escrow", type: "address", indexed: true },
+      { name: "buyer", type: "address", indexed: true },
+      { name: "terms", type: "tuple", indexed: false, components: termsComponents },
+    ],
+  },
+  {
+    type: "event",
+    name: "Delivered",
+    anonymous: false,
+    inputs: [
+      { name: "termsHash", type: "bytes32", indexed: true },
+      { name: "manifestHash", type: "bytes32", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "Decided",
+    anonymous: false,
+    inputs: [
+      { name: "termsHash", type: "bytes32", indexed: true },
+      { name: "accepted", type: "bool", indexed: false },
+      { name: "killFee", type: "uint256", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "Released",
+    anonymous: false,
+    inputs: [
+      { name: "termsHash", type: "bytes32", indexed: true },
+      { name: "key", type: "bytes32", indexed: false },
+      { name: "manifestHash", type: "bytes32", indexed: false },
+      { name: "toSeller", type: "uint256", indexed: false },
+      { name: "toBuyer", type: "uint256", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "Refunded",
+    anonymous: false,
+    inputs: [
+      { name: "termsHash", type: "bytes32", indexed: true },
+      { name: "toBuyer", type: "uint256", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "Cancelled",
+    anonymous: false,
+    inputs: [
+      { name: "termsHash", type: "bytes32", indexed: true },
+      { name: "toBuyer", type: "uint256", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "Swept",
+    anonymous: false,
+    inputs: [
+      { name: "termsHash", type: "bytes32", indexed: true },
+      { name: "token", type: "address", indexed: true },
+      { name: "toBuyer", type: "uint256", indexed: false },
+    ],
+  },
+  { type: "event", name: "EIP712DomainChanged", anonymous: false, inputs: [] },
+  // errors
+  { type: "error", name: "BadTerms", inputs: [{ name: "code", type: "uint8" }] },
+  { type: "error", name: "NotAuthorized", inputs: [] },
+  { type: "error", name: "BadKey", inputs: [] },
+  { type: "error", name: "BadStatus", inputs: [{ name: "status", type: "uint8" }] },
+  {
+    type: "error",
+    name: "Underfunded",
+    inputs: [
+      { name: "have", type: "uint256" },
+      { name: "need", type: "uint256" },
+    ],
+  },
+  { type: "error", name: "TooEarly", inputs: [{ name: "at", type: "uint256" }] },
+  { type: "error", name: "TooLate", inputs: [{ name: "at", type: "uint256" }] },
+  { type: "error", name: "AlreadyRegistered", inputs: [] },
+  { type: "error", name: "BadSignature", inputs: [] },
+  { type: "error", name: "SignatureExpired", inputs: [] },
+  { type: "error", name: "ManifestMismatch", inputs: [] },
+  { type: "error", name: "ChargeTooHigh", inputs: [{ name: "max", type: "uint256" }] },
+] as const;
+
+export const keyframeVaultAbi = [
+  {
+    type: "function",
+    name: "push",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "token", type: "address" },
+      { name: "to", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  { type: "error", name: "OnlyFactory", inputs: [] },
+] as const;
+
+/** USDC (FiatTokenV2_2) subset: balanceOf, transfer, EIP-3009 `bytes signature` overload, authorizationState. */
+export const erc20Abi = [
+  {
+    type: "function",
+    name: "balanceOf",
+    stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "transfer",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "to", type: "address" },
+      { name: "value", type: "uint256" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
+  {
+    type: "function",
+    name: "transferWithAuthorization",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "from", type: "address" },
+      { name: "to", type: "address" },
+      { name: "value", type: "uint256" },
+      { name: "validAfter", type: "uint256" },
+      { name: "validBefore", type: "uint256" },
+      { name: "nonce", type: "bytes32" },
+      { name: "signature", type: "bytes" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "authorizationState",
+    stateMutability: "view",
+    inputs: [
+      { name: "authorizer", type: "address" },
+      { name: "nonce", type: "bytes32" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
+  {
+    type: "event",
+    name: "Transfer",
+    anonymous: false,
+    inputs: [
+      { name: "from", type: "address", indexed: true },
+      { name: "to", type: "address", indexed: true },
+      { name: "value", type: "uint256", indexed: false },
+    ],
+  },
+] as const;

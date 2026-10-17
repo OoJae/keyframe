@@ -1,0 +1,90 @@
+# Keyframe escrow contracts. Compiler settings are part of the deployed address (CREATE2 over init code):
+# changing any of solc / evm_version / optimizer / metadata changes the factory address.
+[profile.default]
+src = "src"
+test = "test"
+script = "script"
+out = "out"
+libs = ["lib"]
+solc = "0.8.30"
+auto_detect_solc = false
+evm_version = "cancun"
+optimizer = true
+optimizer_runs = 10_000
+via_ir = false
+# No CBOR metadata: init code (and therefore the CREATE2 address) depends only on source semantics,
+# not on comments, file paths or the metadata hash. Etherscan standard-JSON verification still works.
+bytecode_hash = "none"
+cbor_metadata = false
+remappings = [
+  "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+  "forge-std/=lib/forge-std/src/",
+  # Pinned transitively by the OpenZeppelin v5.7.0 submodule (used only by test/halmos).
+  "halmos-cheatcodes/=lib/openzeppelin-contracts/lib/halmos-cheatcodes/src/",
+]
+fs_permissions = [
+  { access = "read", path = "../docs/design/vectors" },
+  { access = "read-write", path = "./test/vectors" },
+  { access = "read-write", path = "./deployments" },
+  { access = "read", path = "./out" },
+]
+gas_snapshot_check = false
+
+[profile.default.fuzz]
+runs = 1_000
+seed = "0x6b657966"
+
+[profile.default.invariant]
+runs = 256
+depth = 64
+fail_on_revert = true
+show_metrics = true
+
+# Long campaigns: FOUNDRY_PROFILE=deep forge test
+[profile.deep.fuzz]
+runs = 20_000
+seed = "0x6b657966"
+
+[profile.deep.invariant]
+runs = 5_000
+depth = 128
+fail_on_revert = true
+show_metrics = true
+
+# CI: deterministic seed, moderate depth, gas snapshot enforced.
+[profile.ci]
+gas_snapshot_check = true
+
+[profile.ci.fuzz]
+runs = 5_000
+seed = "0x6b657966"
+
+[profile.ci.invariant]
+runs = 512
+depth = 96
+fail_on_revert = true
+
+# Symbolic runs: FOUNDRY_PROFILE=halmos halmos --contract KeyframeEscrowSymTest. Halmos does not implement the
+# vm.deployCode calls that dynamic test linking substitutes for `new`, so it is switched off here.
+[profile.halmos]
+dynamic_test_linking = false
+out = "out-halmos"
+cache_path = "cache-halmos"
+
+[rpc_endpoints]
+base = "${BASE_RPC_URL}"
+
+[fmt]
+line_length = 120
+tab_width = 4
+bracket_spacing = false
+int_types = "long"
+number_underscore = "thousands"
+sort_imports = true
+
+[lint]
+# block-timestamp: time is the protocol (deadlines, review windows: minutes to days); sequencer skew is irrelevant.
+# reentrancy-events: every entry point is nonReentrant, and the external calls that precede events are views
+# (balanceOf, ERC-1271) or calls into the validated USDC (EIP-3009 pull, keeper refund push), which has no hooks.
+exclude_lints = ["block-timestamp", "reentrancy-events"]
+ignore = ["test/**/*.sol", "script/**/*.sol"]

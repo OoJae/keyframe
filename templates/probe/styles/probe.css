@@ -1,0 +1,116 @@
+/* probe / style "probe": REFERENCE IMPLEMENTATION, replace with the builder's own design.
+   A test card for synthetic monitoring: colour bars, a per-frame counter, corner marks and a linear sweep.
+   Fixed neutral colours on purpose; the probe takes no palette. */
+
+#root {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #151515;
+  color: #f2f2f2;
+  font-family: 'KF Reference Sans', sans-serif;
+}
+
+.pr-card {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  padding: var(--kf-safe-top) var(--kf-safe-x) var(--kf-safe-bottom);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.pr-bars {
+  display: flex;
+  width: 100%;
+  height: 12%;
+}
+
+.pr-bar {
+  flex: 1 1 0;
+  height: 100%;
+}
+
+.pr-bar:nth-child(1) { background: #c0c0c0; }
+.pr-bar:nth-child(2) { background: #c0c000; }
+.pr-bar:nth-child(3) { background: #00c0c0; }
+.pr-bar:nth-child(4) { background: #00c000; }
+.pr-bar:nth-child(5) { background: #c000c0; }
+.pr-bar:nth-child(6) { background: #c00000; }
+.pr-bar:nth-child(7) { background: #0000c0; }
+
+.pr-middle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--kf-space-3);
+}
+
+.pr-title,
+.pr-id,
+.pr-info,
+.pr-time {
+  margin: 0;
+  display: block;
+  text-align: center;
+  line-height: 1.2;
+}
+
+.pr-title {
+  font-size: var(--kf-type-label);
+  font-weight: var(--kf-weight-label);
+  letter-spacing: var(--kf-tracking-label);
+}
+
+.pr-id {
+  font-size: var(--kf-type-body);
+  overflow-wrap: anywhere;
+}
+
+.pr-frame {
+  margin: 0;
+  display: block;
+  font-size: var(--kf-type-display);
+  font-weight: var(--kf-weight-display);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.pr-time,
+.pr-info {
+  font-size: var(--kf-type-unit);
+  font-variant-numeric: tabular-nums;
+  color: #b0b0b0;
+}
+
+.pr-sweep-track {
+  position: relative;
+  width: 100%;
+  height: 48px;
+  border: 2px solid #5a5a5a;
+  box-sizing: border-box;
+}
+
+.pr-sweep {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 48px;
+  height: 100%;
+  background: #f2f2f2;
+}
+
+.pr-corner {
+  position: absolute;
+  width: 56px;
+  height: 56px;
+  border: 0 solid #f2f2f2;
+}
+
+.pr-corner.tl { top: 24px; left: 24px; border-top-width: 6px; border-left-width: 6px; }
+.pr-corner.tr { top: 24px; right: 24px; border-top-width: 6px; border-right-width: 6px; }
+.pr-corner.bl { bottom: 24px; left: 24px; border-bottom-width: 6px; border-left-width: 6px; }
+.pr-corner.br { bottom: 24px; right: 24px; border-bottom-width: 6px; border-right-width: 6px; }

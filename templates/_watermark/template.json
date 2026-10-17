@@ -1,0 +1,20 @@
+{
+  "$schema": "../template.schema.json",
+  "id": "_watermark",
+  "version": "0.1.0",
+  "format": "catalog",
+  "status": "kit",
+  "title": "Preview watermark tile (REFERENCE IMPLEMENTATION)",
+  "styles": ["reference"],
+  "aspects": {
+    "9:16": { "width": 1080, "height": 1920 },
+    "1:1": { "width": 1080, "height": 1080 },
+    "16:9": { "width": 1920, "height": 1080 }
+  },
+  "fps": 30,
+  "durations": [1],
+  "heroTime": { "1": 0 },
+  "perf": { "renderBudgetS": 10, "stillBudgetS": 10 },
+  "variables": [],
+  "overlay": { "opacity": 0.22 }
+}

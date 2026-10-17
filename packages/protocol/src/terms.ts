@@ -1,0 +1,105 @@
+import {
+  type Address,
+  concat,
+  getAddress,
+  getContractAddress,
+  getCreate2Address,
+  type Hex,
+  hashTypedData,
+  keccak256,
+  type TypedDataDomain,
+} from "viem";
+import { bytes32 } from "./bytes.js";
+import {
+  CHAIN_ID,
+  CLONE_PREFIX,
+  CLONE_SUFFIX,
+  DECISION_TYPES,
+  EIP712_NAME,
+  EIP712_VERSION,
+  TERMS_TYPES,
+} from "./constants.js";
+import { type Terms, type TermsJson, TermsJsonSchema } from "./schemas.js";
+
+const lower = (h: unknown): unknown => (typeof h === "string" ? h.toLowerCase() : h);
+
+/** Validate Terms JSON (§1: checksummed addresses, decimal amount, lowercase bytes32) and lift it to Terms. */
+export function termsFromJson(json: unknown): Terms {
+  const j = TermsJsonSchema.parse(json);
+  return { ...j, amount: BigInt(j.amount) };
+}
+
+/** Canonical Terms JSON (§1). Throws if `t` is outside the Terms v1 type domain. */
+export function termsToJson(t: Terms): TermsJson {
+  return TermsJsonSchema.parse({
+    buyer: getAddress(t.buyer),
+    seller: getAddress(t.seller),
+    operator: getAddress(t.operator),
+    token: getAddress(t.token),
+    amount: typeof t.amount === "bigint" ? t.amount.toString() : t.amount,
+    dueAt: t.dueAt,
+    deadline: t.deadline,
+    reviewWindow: t.reviewWindow,
+    slaFloorBps: t.slaFloorBps,
+    killFeeBps: t.killFeeBps,
+    keyHash: lower(t.keyHash),
+    specHash: lower(t.specHash),
+    contentHash: lower(t.contentHash),
+    salt: lower(t.salt),
+  });
+}
+
+/** EIP-712 domain of a factory: {"Keyframe Escrow", "1", 8453, factory}. */
+export function domainOf(factory: Address): TypedDataDomain {
+  return { name: EIP712_NAME, version: EIP712_VERSION, chainId: CHAIN_ID, verifyingContract: getAddress(factory) };
+}
+
+/** termsHash = EIP-712 digest of Terms under the factory's domain (== factory.hashTerms(t)). */
+export function hashTerms(t: Terms, factory: Address): Hex {
+  return hashTypedData({
+    domain: domainOf(factory),
+    types: TERMS_TYPES,
+    primaryType: "Terms",
+    message: { ...t, dueAt: BigInt(t.dueAt), deadline: BigInt(t.deadline) },
+  });
+}
+
+/** VAULT_IMPL is the only contract the factory constructor creates: CREATE address at contract nonce 1. */
+export function vaultImplOf(factory: Address): Address {
+  return getContractAddress({ from: getAddress(factory), nonce: 1n });
+}
+
+/** E = Clones.predictDeterministicAddress(vaultImpl, termsHash, factory) (OZ v5, canonical EIP-1167). */
+export function escrowOf(termsHash: Hex, factory: Address, vaultImpl: Address = vaultImplOf(factory)): Address {
+  bytes32(termsHash, "termsHash");
+  const initCodeHash = keccak256(concat([CLONE_PREFIX, getAddress(vaultImpl), CLONE_SUFFIX]));
+  return getCreate2Address({ from: getAddress(factory), salt: termsHash, bytecodeHash: initCodeHash });
+}
+
+/**
+ * Mirror of factory.payoutAt (§3) in exact integer arithmetic (== Solidity with mulDiv). Throws RangeError
+ * where the Solidity version reverts (slaFloorBps > 10000 inside the decay segment).
+ */
+export function payoutAt(t: Terms, ts: bigint | number): bigint {
+  const now = BigInt(ts);
+  if (now < 0n) throw new RangeError("payoutAt: ts must be non-negative");
+  const amount = t.amount;
+  const dueAt = BigInt(t.dueAt);
+  const deadline = BigInt(t.deadline);
+  if (dueAt === 0n || now <= dueAt) return amount;
+  const floor = (amount * BigInt(t.slaFloorBps)) / 10_000n;
+  if (now >= deadline) return floor;
+  if (floor > amount) throw new RangeError("payoutAt: slaFloorBps > 10000 (reverts on-chain)");
+  return amount - ((amount - floor) * (now - dueAt)) / (deadline - dueAt);
+}
+
+/** EIP-712 typed data for a Studio review decision, ready for viem signTypedData / hashTypedData. */
+export function decisionTypedData(termsHash: Hex, accept: boolean, deadline: bigint | number, factory: Address) {
+  bytes32(termsHash, "termsHash");
+  return {
+    domain: domainOf(factory),
+    types: DECISION_TYPES,
+    primaryType: "Decision" as const,
+    message: { termsHash, accept, deadline: BigInt(deadline) },
+  };
+}

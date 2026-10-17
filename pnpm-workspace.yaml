@@ -1,0 +1,22 @@
+# Workspace = shared packages + deployable apps. plugin/ is a standalone pnpm root (starter v1.0.2, own
+# lockfile) and receives packages/protocol via `pnpm sync:protocol`; spike/ and templates/ are not packages.
+packages:
+  - "packages/*"
+  - "apps/*"
+  - "!apps/worker"
+
+# Single source of truth for versions that must be byte-identical across packages (ABI/typed-data encoding,
+# schema behaviour). Reference them as "catalog:" in package.json.
+catalog:
+  viem: 2.51.3
+  zod: 4.4.3
+  typescript: 5.9.3
+  "@types/node": 24.12.2
+  vitest: 5.0.3
+  fast-check: 4.10.2
+
+saveExact: true
+
+allowBuilds:
+  esbuild: true
+  workerd: true

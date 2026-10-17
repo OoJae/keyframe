@@ -1,0 +1,139 @@
+/* countdown / style "tminus": REFERENCE IMPLEMENTATION, replace with the builder's own design.
+   Plain layout only. Colours come from the job's bg/fg/accent variables (--bg/--fg/--accent on the root). */
+
+#root {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg, var(--kf-fallback-bg));
+  color: var(--fg, var(--kf-fallback-fg));
+  font-family: 'KF Reference Sans', sans-serif;
+}
+
+.cd-card {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  padding: var(--kf-safe-top) var(--kf-safe-x) var(--kf-safe-bottom);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.cd-mask {
+  overflow: hidden;
+}
+
+.cd-label {
+  margin: 0;
+  display: block;
+  font-size: var(--kf-type-label);
+  font-weight: var(--kf-weight-label);
+  letter-spacing: var(--kf-tracking-label);
+  text-transform: uppercase;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.cd-middle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--kf-space-4);
+}
+
+.cd-units {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  width: 100%;
+}
+
+.cd-unit {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--kf-space-2);
+}
+
+.cd-stack {
+  display: grid;
+  justify-items: center;
+}
+
+.cd-stack > .cd-num {
+  grid-area: 1 / 1;
+}
+
+.cd-num,
+.cd-sep {
+  display: block;
+  font-size: var(--cd-display, var(--kf-type-display));
+  font-weight: var(--kf-weight-display);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.cd-sep {
+  padding: 0 0.08em;
+  color: var(--accent, var(--kf-fallback-accent));
+}
+
+.cd-unit-label {
+  display: block;
+  font-size: var(--kf-type-unit);
+  font-weight: var(--kf-weight-label);
+  letter-spacing: var(--kf-tracking-label);
+  color: var(--accent, var(--kf-fallback-accent));
+}
+
+.cd-target {
+  margin: 0;
+  display: block;
+  max-width: 100%;
+  font-size: var(--kf-type-body);
+  line-height: 1.25;
+  text-align: center;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+
+.cd-bottom {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--kf-space-4);
+}
+
+.cd-cta {
+  margin: 0;
+  display: block;
+  box-sizing: border-box;
+  max-width: 100%;
+  text-align: center;
+  overflow-wrap: anywhere;
+  padding: 0.45em 1.1em;
+  border: var(--kf-hairline) solid var(--fg, var(--kf-fallback-fg));
+  border-radius: var(--kf-radius-pill);
+  font-size: var(--kf-type-body);
+  font-weight: var(--kf-weight-label);
+  line-height: 1.2;
+}
+
+.cd-cta.is-empty {
+  display: none;
+}
+
+.cd-track {
+  width: 100%;
+  height: 6px;
+  background: color-mix(in srgb, var(--fg, var(--kf-fallback-fg)) 18%, transparent);
+}
+
+.cd-bar {
+  width: 100%;
+  height: 100%;
+  background: var(--fg, var(--kf-fallback-fg));
+  transform-origin: 0 50%;
+}

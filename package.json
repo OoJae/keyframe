@@ -1,0 +1,21 @@
+{
+  "name": "keyframe",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.11.0",
+  "engines": {
+    "node": "24.x",
+    "pnpm": "11.11.0"
+  },
+  "scripts": {
+    "typecheck": "pnpm -r --if-present run typecheck",
+    "test": "pnpm -r --if-present run test",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "sync:protocol": "node scripts/sync-protocol.mjs",
+    "sync:protocol:check": "node scripts/sync-protocol.mjs --check"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15"
+  }
+}

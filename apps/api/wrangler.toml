@@ -1,0 +1,75 @@
+# Keyframe x402 API (Cloudflare Workers). Deploy steps: README.md. Secrets are never in this file:
+#   wrangler secret put KMASTER | RELAYER_PRIVATE_KEY | WORKER_TOKEN | ACCESS_SECRET   (and RPC_URL if it embeds a key)
+name = "keyframe-api"
+main = "src/worker.ts"
+compatibility_date = "2026-09-30"
+workers_dev = true
+
+[observability]
+enabled = true
+
+# Keeper #1: every minute (refunds, releases, funding reconciliation, refundExpired(20), OFAC refresh).
+[triggers]
+crons = ["* * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "keyframe"
+# Paste the id printed by: wrangler d1 create keyframe
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+[[kv_namespaces]]
+binding = "KV"
+# Paste the id printed by: wrangler kv namespace create KV
+id = "00000000000000000000000000000000"
+
+# Optional R2 for previews/ciphertext/manifests (otherwise KV is used). Create with:
+#   wrangler r2 bucket create keyframe-files
+# then uncomment, and point FILES_BASE_URL at the bucket's custom domain (or leave it unset to serve via /files).
+# [[r2_buckets]]
+# binding = "FILES"
+# bucket_name = "keyframe-files"
+
+# Singleton relayer: serializes the operator key's nonces and is the only signer.
+[[durable_objects.bindings]]
+name = "RELAYER"
+class_name = "Relayer"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Relayer"]
+
+[vars]
+# Canonical origin used in every 402 resource URL (https, no path). Must be the public hostname of this Worker.
+PUBLIC_BASE_URL = "https://api.keyframe.example"
+# FILES_BASE_URL = "https://files.keyframe.example"   # default: PUBLIC_BASE_URL + /files
+# Escrow factory (Base mainnet) and its constructor SELLER. VAULT_IMPL_ADDRESS defaults to CREATE(factory, 1).
+FACTORY_ADDRESS = "0x0000000000000000000000000000000000000000"
+SELLER_ADDRESS = "0x0000000000000000000000000000000000000000"
+# Optional cross-check: must equal the address of RELAYER_PRIVATE_KEY (T.operator).
+# OPERATOR_ADDRESS = "0x…"
+# USDC_ADDRESS defaults to Base USDC 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 (override only for local chains).
+# RPC_URL may be set here if it carries no key; otherwise: wrangler secret put RPC_URL
+RPC_URL = "https://mainnet.base.org"
+# v2 = PAYMENT-REQUIRED header + {} body (default); v1 = JSON body only (network "base", maxAmountRequired).
+X402_WIRE = "v2"
+# Fallback settlement when the relayer cannot broadcast ("" disables). Never x402.org.
+FACILITATOR_FALLBACK_URL = "https://facilitator.payai.network"
+MAX_AMOUNT = "50000000"
+QUOTE_TTL_S = "600"
+DRAFT_TTL_S = "900"
+MIN_RELEASE_MARGIN_S = "300"
+STUDIO_REVIEW_S = "86400"
+STUDIO_KILL_FEE_BPS = "0"
+STUDIO_MAX_OPEN = "3"
+MAX_INFLIGHT_ORDERS = "20"
+RECEIPT_WAIT_MS = "1200"
+OFAC_MAX_AGE_S = "604800"
+OFAC_REFRESH_S = "21600"
+# Instant formats are sold only when templates/<id>/template.json is designed (status reference/production with
+# styles; bundled at build time, so redeploy after a template ships). chart_moment also needs the market-data
+# snapshot provider, which is not built yet.
+FORMATS_DISABLED = "chart_moment"
+QUOTES_PER_BUYER_PER_HOUR = "30"
+MAINTENANCE = "0"

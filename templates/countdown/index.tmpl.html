@@ -1,0 +1,177 @@
+<!doctype html>
+<!-- countdown: REFERENCE IMPLEMENTATION - replace with the builder's own design.
+     Stamped per job by apps/worker (see templates/README.md). KF_* tokens in double braces are replaced before rendering. -->
+<html lang="en" data-composition-variables="{{KF_VARIABLES}}">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width={{KF_WIDTH}}, height={{KF_HEIGHT}}" />
+    <title>countdown {{KF_TEMPLATE_VERSION}} (reference)</title>
+    <link rel="stylesheet" href="kit/styles/tokens.css" />
+    <link rel="stylesheet" href="styles/{{KF_STYLE}}.css" />
+    <style>
+      @font-face {
+        font-family: 'KF Reference Sans';
+        src: url('kit/fonts/reference-sans/inter-latin-wght-normal.woff2') format('woff2');
+        font-weight: 100 900;
+        font-style: normal;
+        font-display: block;
+      }
+      body {
+        margin: 0;
+        background: #000;
+      }
+    </style>
+    <script src="kit/vendor/gsap.min.js"></script>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-width="{{KF_WIDTH}}"
+      data-height="{{KF_HEIGHT}}"
+      data-duration="{{KF_DURATION}}"
+      data-kf-aspect="{{KF_ASPECT}}"
+    >
+      <section id="cd-card" class="cd-card">
+        <header class="cd-mask" data-layout-allow-overflow>
+          <p id="cd-label" class="cd-label" data-var-text="label">Mainnet launch</p>
+        </header>
+        <div class="cd-middle">
+          <div id="cd-units" class="cd-units">
+            <div class="cd-unit"><span id="cd-d" class="cd-stack"><span class="cd-num">00</span></span><span class="cd-unit-label">DAYS</span></div>
+            <span class="cd-sep">:</span>
+            <div class="cd-unit"><span id="cd-h" class="cd-stack"><span class="cd-num">00</span></span><span class="cd-unit-label">HRS</span></div>
+            <span class="cd-sep">:</span>
+            <div class="cd-unit"><span id="cd-m" class="cd-stack"><span class="cd-num">00</span></span><span class="cd-unit-label">MIN</span></div>
+            <span class="cd-sep">:</span>
+            <div class="cd-unit"><span id="cd-s" class="cd-stack"><span class="cd-num">00</span></span><span class="cd-unit-label">SEC</span></div>
+          </div>
+          <p id="cd-target" class="cd-target" data-var-text="target_text">Oct 24 · 18:00 UTC</p>
+        </div>
+        <footer class="cd-bottom">
+          <p id="cd-cta" class="cd-cta" data-var-text="cta"></p>
+          <div class="cd-track"><div id="cd-bar" class="cd-bar"></div></div>
+        </footer>
+      </section>
+    </div>
+    <script>
+      (function () {
+        var FAMILY = "'KF Reference Sans'";
+        var root = document.getElementById("root");
+        var duration = Number(root.getAttribute("data-duration"));
+        var vars = window.__hyperframes.getVariables();
+        var remaining = Math.max(0, Math.floor(Number(vars.remaining_s) || 0));
+        var dayDigits = Math.floor(remaining / 86400) >= 100 ? 3 : 2;
+        var stacks = ["cd-d", "cd-h", "cd-m", "cd-s"].map(function (id) {
+          return document.getElementById(id);
+        });
+
+        function pad(n, width) {
+          var s = String(n);
+          while (s.length < width) s = "0" + s;
+          return s;
+        }
+        // Readout for r whole seconds left: [days, hours, minutes, seconds].
+        function readout(r) {
+          return [
+            pad(Math.floor(r / 86400), dayDigits),
+            pad(Math.floor((r % 86400) / 3600), 2),
+            pad(Math.floor((r % 3600) / 60), 2),
+            pad(r % 60, 2),
+          ];
+        }
+        function shrinkToFit(el, minRatio) {
+          var maxWidth = el.parentElement.clientWidth;
+          var px = parseFloat(getComputedStyle(el).fontSize);
+          var minPx = px * minRatio;
+          el.style.whiteSpace = "nowrap";
+          while (el.scrollWidth > maxWidth && px - 2 >= minPx) {
+            px -= 2;
+            el.style.fontSize = px + "px";
+          }
+          el.style.whiteSpace = "";
+        }
+
+        // Each digit cell holds one stacked span per value it shows during the clip; the timeline only toggles their
+        // opacity at whole seconds. (Setting textContent through GSAP would coerce "07" to 7.)
+        var segments = stacks.map(function () {
+          return [];
+        });
+        for (var t = 0; t < duration; t++) {
+          var values = readout(Math.max(0, remaining - t));
+          for (var c = 0; c < stacks.length; c++) {
+            var seg = segments[c];
+            var last = seg[seg.length - 1];
+            if (last && last.text === values[c]) last.end = t + 1;
+            else seg.push({ text: values[c], start: t, end: t + 1 });
+          }
+        }
+        segments.forEach(function (seg, c) {
+          stacks[c].textContent = "";
+          seg.forEach(function (s, i) {
+            var span = document.createElement("span");
+            span.className = "cd-num";
+            span.textContent = s.text;
+            span.style.opacity = i === 0 ? "1" : "0";
+            stacks[c].appendChild(span);
+            s.el = span;
+          });
+        });
+        var nums = stacks.map(function (st) {
+          return st.firstElementChild;
+        });
+        if (!String(vars.cta || "").trim()) document.getElementById("cd-cta").classList.add("is-empty");
+
+        function build() {
+          var units = document.getElementById("cd-units");
+          var base = parseFloat(getComputedStyle(nums[0]).fontSize);
+          var fit = window.__hyperframes.fitTextFontSize(pad(0, dayDigits) + ":00:00:00", {
+            maxWidth: units.clientWidth * 0.88,
+            baseFontSize: base,
+            minFontSize: Math.round(base * 0.5),
+            fontWeight: 700,
+            fontFamily: FAMILY,
+            step: 2,
+          });
+          root.style.setProperty("--cd-display", fit.fontSize + "px");
+
+          // Buyer text: shrink on one line (measured in the DOM, so letter-spacing and padding count),
+          // down to 60% of the token size; past that it wraps.
+          shrinkToFit(document.getElementById("cd-label"), 0.6);
+          var cta = document.getElementById("cd-cta");
+          if (!cta.classList.contains("is-empty")) shrinkToFit(cta, 0.6);
+
+          var tl = gsap.timeline({ paused: true });
+          tl.fromTo("#cd-label", { yPercent: 105 }, { yPercent: 0, duration: 0.6, ease: "power3.out" }, 0.1);
+          tl.fromTo(
+            ".cd-unit, .cd-sep",
+            { y: 40, opacity: 0 },
+            { y: 0, opacity: 1, duration: 0.6, ease: "power2.out", stagger: 0.05 },
+            0.25,
+          );
+          tl.fromTo("#cd-target", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power1.out" }, 0.6);
+          tl.fromTo("#cd-cta", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power1.out" }, 0.75);
+          tl.fromTo("#cd-bar", { scaleX: 0 }, { scaleX: 1, duration: duration, ease: "none" }, 0);
+
+          // Ticks: opacity sets at whole seconds, seekable in any order and with any worker count.
+          segments.forEach(function (seg) {
+            seg.forEach(function (s, i) {
+              if (i > 0) tl.set(s.el, { opacity: 1 }, s.start);
+              if (s.end < duration) tl.set(s.el, { opacity: 0 }, s.end);
+            });
+          });
+          // Separators dim for the second half of each second, after the intro has finished.
+          for (var j = 1; j < duration; j++) {
+            tl.set(".cd-sep", { opacity: 0.35 }, j + 0.5);
+            if (j + 1 < duration) tl.set(".cd-sep", { opacity: 1 }, j + 1);
+          }
+
+          window.__timelines["main"] = tl;
+        }
+
+        document.fonts.load("700 100px " + FAMILY).then(build, build);
+      })();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,67 @@
+/* Keyframe kit tokens: REFERENCE VALUES ONLY.
+   These are deliberately plain, neutral numbers so the reference templates (countdown, probe) render and pass
+   `hyperframes check`. They are not Keyframe's motion language. The builder replaces every value marked TODO
+   with their own system (see ../MOTION.md); templates read tokens through var(--kf-*) so a token change
+   restyles every template that uses it.
+
+   Rules that keep this file compatible with HyperFrames (see HYPERFRAMES_NOTES.md §3.6):
+   - No url() in this file. The compiler inlines linked CSS, so relative URLs here would break. @font-face lives
+     inline in each composition file.
+   - Name font families literally in templates ('KF Reference Sans'), never through var(), so the static font
+     check can see them.
+   - Per-aspect values hang off the root's data-kf-aspect attribute (stamped by the worker: 9x16, 1x1, 16x9). */
+
+:root {
+  /* TODO(builder): palette. Variables bg/fg/accent arrive per job as --bg/--fg/--accent on the root; these are
+     only fallbacks for previews of an unstamped file. */
+  --kf-fallback-bg: #101010;
+  --kf-fallback-fg: #f0f0f0;
+  --kf-fallback-accent: #9a9a9a;
+
+  /* TODO(builder): spacing scale. */
+  --kf-space-1: 8px;
+  --kf-space-2: 16px;
+  --kf-space-3: 24px;
+  --kf-space-4: 40px;
+  --kf-space-5: 64px;
+
+  /* TODO(builder): radii and hairlines. */
+  --kf-radius-pill: 999px;
+  --kf-hairline: 2px;
+
+  /* TODO(builder): type. Reference uses one neutral OFL face (fonts/reference-sans). */
+  --kf-tracking-label: 0.12em;
+  --kf-weight-label: 600;
+  --kf-weight-display: 700;
+}
+
+/* Safe areas: keep text clear of social-app chrome (captions, buttons). TODO(builder): confirm per platform. */
+[data-kf-aspect="9x16"] {
+  --kf-safe-x: 80px;
+  --kf-safe-top: 220px;
+  --kf-safe-bottom: 300px;
+  --kf-type-label: 44px;
+  --kf-type-body: 40px;
+  --kf-type-display: 150px;
+  --kf-type-unit: 26px;
+}
+
+[data-kf-aspect="1x1"] {
+  --kf-safe-x: 80px;
+  --kf-safe-top: 96px;
+  --kf-safe-bottom: 120px;
+  --kf-type-label: 40px;
+  --kf-type-body: 34px;
+  --kf-type-display: 140px;
+  --kf-type-unit: 24px;
+}
+
+[data-kf-aspect="16x9"] {
+  --kf-safe-x: 140px;
+  --kf-safe-top: 96px;
+  --kf-safe-bottom: 110px;
+  --kf-type-label: 44px;
+  --kf-type-body: 36px;
+  --kf-type-display: 180px;
+  --kf-type-unit: 28px;
+}

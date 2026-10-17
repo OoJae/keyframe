@@ -1,0 +1,124 @@
+{
+  "$schema": "../template.schema.json",
+  "id": "portfolio_pulse",
+  "version": "0.0.0",
+  "format": "portfolio_pulse",
+  "status": "awaiting-design",
+  "title": "Portfolio Pulse (AWAITING DESIGN)",
+  "styles": [],
+  "aspects": {
+    "9:16": {
+      "width": 1080,
+      "height": 1920
+    },
+    "1:1": {
+      "width": 1080,
+      "height": 1080
+    },
+    "16:9": {
+      "width": 1920,
+      "height": 1080
+    }
+  },
+  "fps": 30,
+  "durations": [
+    8
+  ],
+  "heroTime": {
+    "8": 5.8
+  },
+  "perf": {
+    "renderBudgetS": 60,
+    "stillBudgetS": 4.5
+  },
+  "variables": [
+    {
+      "id": "title",
+      "type": "string",
+      "label": "Title (empty = style default)",
+      "default": "",
+      "maxLength": 32
+    },
+    {
+      "id": "handle",
+      "type": "string",
+      "label": "Handle (empty = none)",
+      "default": "",
+      "maxLength": 24
+    },
+    {
+      "id": "display",
+      "type": "enum",
+      "label": "What to show",
+      "default": "percent_only",
+      "options": [
+        {
+          "value": "percent_only",
+          "label": "Percent only"
+        },
+        {
+          "value": "values",
+          "label": "Percent and values"
+        }
+      ]
+    },
+    {
+      "id": "as_of_text",
+      "type": "string",
+      "label": "As-of time, formatted by the API",
+      "default": "Oct 17 · 14:00 UTC",
+      "maxLength": 40
+    },
+    {
+      "id": "total_change_bp",
+      "type": "number",
+      "label": "24h move of current holdings in basis points (never PnL)",
+      "default": 0,
+      "integer": true,
+      "min": -10000,
+      "max": 10000000
+    },
+    {
+      "id": "total_usd_text",
+      "type": "string",
+      "label": "Total value, formatted by the API (empty when display = percent_only)",
+      "default": "",
+      "maxLength": 24
+    },
+    {
+      "id": "holdings_json",
+      "type": "string",
+      "label": "JSON array, at most 6: [{\"symbol\":\"ETH\",\"change_bp\":123|null,\"usd_text\":\"$1.2k\"|\"\"}]",
+      "default": "[]",
+      "maxLength": 2048,
+      "json": true
+    },
+    {
+      "id": "bg",
+      "type": "color",
+      "label": "Background (resolved from the palette preset or custom palette)",
+      "default": "#101010"
+    },
+    {
+      "id": "fg",
+      "type": "color",
+      "label": "Foreground",
+      "default": "#f0f0f0"
+    },
+    {
+      "id": "accent",
+      "type": "color",
+      "label": "Accent",
+      "default": "#9a9a9a"
+    },
+    {
+      "id": "seed",
+      "type": "number",
+      "label": "PRNG seed: first 4 bytes of specHash as an unsigned integer",
+      "default": 0,
+      "integer": true,
+      "min": 0,
+      "max": 4294967295
+    }
+  ]
+}

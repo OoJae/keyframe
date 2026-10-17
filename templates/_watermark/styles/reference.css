@@ -1,0 +1,49 @@
+/* _watermark / style "reference": REFERENCE IMPLEMENTATION, replace with the builder's own design.
+   White on black only: brightness becomes the tile's alpha. */
+
+#root {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+  color: #fff;
+  font-family: 'KF Reference Sans', sans-serif;
+}
+
+.wm-rows {
+  position: absolute;
+  top: -40%;
+  left: -40%;
+  width: 180%;
+  height: 180%;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-around;
+  rotate: -24deg;
+}
+
+.wm-row {
+  margin: 0;
+  white-space: nowrap;
+  font-size: 54px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+.wm-row:nth-child(even) {
+  translate: -18% 0;
+}
+
+.wm-badge {
+  position: absolute;
+  right: 48px;
+  bottom: 48px;
+  margin: 0;
+  padding: 14px 26px;
+  border: 4px solid #fff;
+  border-radius: 999px;
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}

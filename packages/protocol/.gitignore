@@ -1,0 +1,2 @@
+# local test-runner reports (e.g. RTK's vitest JSON output)
+.vitest/

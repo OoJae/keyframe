@@ -1,0 +1,5 @@
+# Foundry outputs (root .gitignore already covers out/, cache/, broadcast/)
+out-halmos/
+cache-halmos/
+# Local anvil-fork deployments use throwaway sellers; never confuse them with real chains.
+deployments/local/

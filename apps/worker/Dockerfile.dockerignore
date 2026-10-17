@@ -1,0 +1,12 @@
+# BuildKit reads <Dockerfile>.dockerignore next to the Dockerfile; the build context is the repository root.
+# Allowlist: only what the image needs.
+*
+!apps/worker/package.json
+!apps/worker/package-lock.json
+!apps/worker/.npmrc
+!apps/worker/src
+!templates
+**/node_modules
+**/.DS_Store
+**/*.md
+templates/**/design

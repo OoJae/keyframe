@@ -1,0 +1,41 @@
+{
+  "$schema": "../template.schema.json",
+  "id": "countdown",
+  "version": "0.1.0",
+  "format": "countdown",
+  "status": "reference",
+  "title": "Countdown (REFERENCE IMPLEMENTATION)",
+  "styles": ["tminus"],
+  "aspects": {
+    "9:16": { "width": 1080, "height": 1920 },
+    "1:1": { "width": 1080, "height": 1080 },
+    "16:9": { "width": 1920, "height": 1080 }
+  },
+  "fps": 30,
+  "durations": [8],
+  "heroTime": { "8": 3 },
+  "perf": { "renderBudgetS": 60, "stillBudgetS": 4.5 },
+  "variables": [
+    { "id": "label", "type": "string", "label": "Label", "default": "Mainnet launch", "minLength": 1, "maxLength": 32 },
+    {
+      "id": "target_text",
+      "type": "string",
+      "label": "Target, formatted by the API from params.target and tz_label",
+      "default": "Oct 24 · 18:00 UTC",
+      "maxLength": 40
+    },
+    {
+      "id": "remaining_s",
+      "type": "number",
+      "label": "Whole seconds remaining at the first frame (target minus the spec's time anchor)",
+      "default": 191673,
+      "integer": true,
+      "min": 0,
+      "max": 86399999
+    },
+    { "id": "cta", "type": "string", "label": "Call to action (empty = none)", "default": "", "maxLength": 24 },
+    { "id": "bg", "type": "color", "label": "Background", "default": "#101010" },
+    { "id": "fg", "type": "color", "label": "Foreground", "default": "#f0f0f0" },
+    { "id": "accent", "type": "color", "label": "Accent", "default": "#9a9a9a" }
+  ]
+}

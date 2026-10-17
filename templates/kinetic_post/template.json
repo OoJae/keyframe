@@ -1,0 +1,92 @@
+{
+  "$schema": "../template.schema.json",
+  "id": "kinetic_post",
+  "version": "0.0.0",
+  "format": "kinetic_post",
+  "status": "awaiting-design",
+  "title": "Kinetic Post (AWAITING DESIGN)",
+  "styles": [],
+  "aspects": {
+    "9:16": {
+      "width": 1080,
+      "height": 1920
+    },
+    "1:1": {
+      "width": 1080,
+      "height": 1080
+    },
+    "16:9": {
+      "width": 1920,
+      "height": 1080
+    }
+  },
+  "fps": 30,
+  "durations": [
+    6,
+    9,
+    12,
+    15
+  ],
+  "heroTime": {
+    "6": null,
+    "9": null,
+    "12": null,
+    "15": null
+  },
+  "perf": {
+    "renderBudgetS": 90,
+    "stillBudgetS": 4.5
+  },
+  "variables": [
+    {
+      "id": "text",
+      "type": "string",
+      "label": "Post text",
+      "default": "Your announcement",
+      "minLength": 1,
+      "maxLength": 280
+    },
+    {
+      "id": "byline",
+      "type": "string",
+      "label": "Byline (empty = none)",
+      "default": "",
+      "maxLength": 32
+    },
+    {
+      "id": "emphasis_json",
+      "type": "string",
+      "label": "JSON array of up to 5 words to emphasise (each at most 24 chars)",
+      "default": "[]",
+      "maxLength": 200,
+      "json": true
+    },
+    {
+      "id": "bg",
+      "type": "color",
+      "label": "Background (resolved from the palette preset or custom palette)",
+      "default": "#101010"
+    },
+    {
+      "id": "fg",
+      "type": "color",
+      "label": "Foreground",
+      "default": "#f0f0f0"
+    },
+    {
+      "id": "accent",
+      "type": "color",
+      "label": "Accent",
+      "default": "#9a9a9a"
+    },
+    {
+      "id": "seed",
+      "type": "number",
+      "label": "PRNG seed: first 4 bytes of specHash as an unsigned integer",
+      "default": 0,
+      "integer": true,
+      "min": 0,
+      "max": 4294967295
+    }
+  ]
+}
