@@ -11,6 +11,7 @@ without any action on your part.
   source verified on [Sourcify](https://sourcify.dev/server/v2/contract/8453/0xd9d55954366Bb9ce979B992DE7218DAF1d61e561).
 - API: <https://keyframe-api.keyframe-spike-server.workers.dev> ([llms.txt](https://keyframe-api.keyframe-spike-server.workers.dev/llms.txt),
   [live counters](https://keyframe-api.keyframe-spike-server.workers.dev/v1/stats)).
+- **Demo film (78 s):** <https://x.com/_OoJae/status/2111554748595970389>
 - First real order, placed from Claude.ai: sealed, key published and verified 16/16 in
   [docs/evidence/LIVE.md](docs/evidence/LIVE.md).
 
