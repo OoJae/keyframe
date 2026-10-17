@@ -55,7 +55,7 @@ export function chooseRoute(cfg: Config, w: WalletView, amount: bigint): Route {
     return {
       kind: "fund_first",
       wallet: w,
-      reason: `wallet ${at} has ${usdc(w.usdc_atomic ?? "0")} USDC on Base; this costs ${usdc(amount)}. Add at least ${usdc(w.shortfall_atomic)} USDC on Base first (core get_buy_link), or pick a cheaper format`,
+      reason: `wallet ${at} has ${usdc(w.usdc_atomic ?? "0")} USDC on Base; this costs ${usdc(amount)}. Add at least ${usdc(w.shortfall_atomic)} USDC on Base first (core get_buy_link), or pick a cheaper format; or, if the user holds USDC on Solana, move it to this Base wallet with core request_swap, then quote again`,
     };
   }
   const ethWei = w.eth_wei === null ? null : BigInt(w.eth_wei);

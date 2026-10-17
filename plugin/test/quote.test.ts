@@ -100,6 +100,12 @@ describe("keyframe_quote", () => {
     expect(q.route.wallet.shortfall_atomic).toBe("2800000");
     expect(q.next.tool).toBe("get_buy_link");
     expect(q.route.reason).toContain("Add at least 2.80 USDC");
+    // F03: a hedged route for USDC held on Solana, in the reason, the next note and the card text.
+    const hint =
+      "or, if the user holds USDC on Solana, move it to this Base wallet with core request_swap, then quote again";
+    expect(q.route.reason).toContain(hint);
+    expect(q.next.note).toContain(hint);
+    expect(r.text).toMatch(/^Next: Core PayBox tool\. .*core get_buy_link.*core request_swap, then quote again\./m);
   });
 
   it("KEYFRAME_PRIMARY_RAIL=direct routes plain wallets to the direct rail", async () => {

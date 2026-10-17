@@ -38,6 +38,8 @@ export type PaidRef = {
   secrets_withheld?: boolean;
   /** HTTP 429: the request was rate limited and not processed. */
   rate_limited?: boolean;
+  /** Keyframe's watch page for the order; shown only if it passes the own-host guard (core/links.ts). */
+  watch_url?: string;
 };
 
 const str = (o: Record<string, unknown>, k: string, re: RegExp): string | undefined =>
@@ -69,6 +71,7 @@ function asPaid(o: Record<string, unknown>): PaidRef | null {
   if (error) ref.error = error;
   if (o.secrets_withheld === true) ref.secrets_withheld = true;
   if (error === "rate_limited" && o.processed === false) ref.rate_limited = true;
+  if (typeof o.watch_url === "string" && o.watch_url.length <= 600) ref.watch_url = o.watch_url;
   return ref.order_id || ref.terms_hash || ref.charged !== undefined || ref.rate_limited ? ref : null;
 }
 

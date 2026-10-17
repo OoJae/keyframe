@@ -4,11 +4,13 @@ import { fail } from "../core/checks.js";
 import { type Config, findFactory, loadConfig } from "../core/config.js";
 import { derive, RELEASE_GRACE_S } from "../core/deal.js";
 import { envelopeOf } from "../core/envelope.js";
+import { linkLine, linksOf, MAX_LINK_LINES } from "../core/links.js";
 import { Budget } from "../core/net.js";
 import { type Snapshot, snapshot } from "../core/onchain.js";
 import { reviewQuote } from "../core/quote.js";
 import { changesOf, fetchOrder, resolveOrder } from "../core/resolve.js";
 import { dataResult, guarded, NOTHING_MOVED } from "../core/result.js";
+import { keyframeUrl } from "../core/still.js";
 import { capRecord, clean, nowSeconds, quoted, shortAddr, usdc, utc } from "../core/text.js";
 import { type NextStep, quoteCard, quoteView } from "../core/views.js";
 import { type Quote, Status, termsFromJson } from "../protocol/index.js";
@@ -183,6 +185,32 @@ async function quoteStatus(cfg: Config, budget: Budget, quoteId: string, waitS: 
   });
 }
 
+/**
+ * The watermarked previews to review a delivered Studio order: Keyframe's order view `preview_url` and, after a
+ * change request, `changes.revision.preview_url`. Own hosts only; labels fixed here.
+ */
+function reviewPreviews(cfg: Config, order: Record<string, unknown> | null): [string, string][] {
+  const c = order?.changes;
+  const rev = typeof c === "object" && c !== null ? (c as Record<string, unknown>).revision : null;
+  const url = (v: unknown) => (typeof v === "string" ? keyframeUrl(cfg, v) : null);
+  const first = url(order?.preview_url);
+  const revised = typeof rev === "object" && rev !== null ? url((rev as Record<string, unknown>).preview_url) : null;
+  const out: [string, string][] = [];
+  if (first) out.push(["Review preview (watermarked)", first]);
+  if (revised && revised !== first) out.push(["Revision preview (watermarked)", revised]);
+  return out;
+}
+
+/** Link lines for an order: review previews while IN REVIEW, then up to 3 backend links (watch page, receipt, ...). */
+function orderLinkLines(cfg: Config, order: Record<string, unknown> | null, inReview: boolean): string[] {
+  const previews = inReview ? reviewPreviews(cfg, order) : [];
+  const links = linksOf(cfg, order).filter((l) => !previews.some(([, url]) => url === l.url));
+  return [
+    ...previews.map(([label, url]) => linkLine({ kind: "preview", url }, label)),
+    ...links.slice(0, MAX_LINK_LINES).map((l) => linkLine(l)),
+  ];
+}
+
 /** Keyframe's own progress report: backend strings, quoted as data. */
 function progressText(order: Record<string, unknown> | null): string {
   if (!order) return "";
@@ -239,6 +267,7 @@ async function orderStatus(
     `Keyframe order ${orderId}: ${env.envelope}. ${env.meaning[0]?.toUpperCase()}${env.meaning.slice(1)}.${progressText(order)}`,
     `Envelope ${r.escrow}${amount !== undefined ? ` · ${usdc(amount)} USDC` : ""}${deadline ? ` · deadline ${utc(deadline)}` : ""} · read on ${snap.rpc.responded} of ${snap.rpc.configured} Base RPCs${snap.view.consistent ? "" : " (they DISAGREE; re-check shortly)"}.`,
     failedChecks.length > 0 ? `WARNING: ${failedChecks.map((c) => c.detail).join("; ")}.` : "",
+    ...orderLinkLines(cfg, order, snap.order?.status === Status.Delivered),
     `Next: ${next.tool ?? "nothing"}: ${next.note}`,
   ].filter(Boolean);
   return dataResult(lines.join("\n"), {
