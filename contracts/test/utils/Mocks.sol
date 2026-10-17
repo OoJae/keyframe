@@ -76,3 +76,30 @@ contract Self1271Delegate is IERC1271 {
                 : bytes4(0);
     }
 }
+
+/// @notice ERC-20 whose transfers to `hungry` burn a fixed amount of gas: models a token upgrade that makes transfers
+///         expensive enough for the 63/64 rule to starve a nested push while the caller still completes.
+contract GasHungryToken is ERC20 {
+    uint256 public immutable burn;
+    address public hungry;
+
+    constructor(uint256 burn_) ERC20("Hungry", "HGR") {
+        burn = burn_;
+    }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function setHungry(address a) external {
+        hungry = a;
+    }
+
+    function _update(address from, address to, uint256 value) internal override {
+        if (to == hungry && to != address(0)) {
+            uint256 start = gasleft();
+            while (start - gasleft() < burn) {}
+        }
+        super._update(from, to, value);
+    }
+}

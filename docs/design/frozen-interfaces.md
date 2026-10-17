@@ -64,7 +64,8 @@ function push(address token, address to, uint256 amount) external;  // only FACT
 
 ### KeyframeEscrowFactory
 Constructor `(address usdc, address seller)`; immutables `USDC`, `SELLER`, `VAULT_IMPL`,
-`MIN_AMOUNT = 100_000`, `MAX_AMOUNT = 50_000_000`, `MAX_LIFETIME = 30 days`, `RELEASE_GRACE = 3 days`.
+`MIN_AMOUNT = 100_000`, `MAX_AMOUNT = 50_000_000`, `MAX_LIFETIME = 30 days`, `RELEASE_GRACE = 3 days`,
+and (additive, audit L2) `uint32 MAX_REVIEW_WINDOW = 14 days`, `uint16 MAX_KILL_FEE_BPS = 5000`.
 Ownerless, no admin, no upgrade, never holds funds, no `receive()`.
 
 ```solidity
@@ -92,6 +93,10 @@ function payoutAt(Terms calldata t, uint256 ts) external pure returns (uint256);
 function order(bytes32 termsHash) external view returns (OrderView memory);
 function registryLength() external view returns (uint256);
 function refundableCount(uint256 maxScan) external view returns (uint256);
+// additive (audit fixes; not in the v1 lock, no existing signature changed)
+function MAX_REVIEW_WINDOW() external view returns (uint32);   // 14 days
+function MAX_KILL_FEE_BPS() external view returns (uint16);    // 5000
+function scanFrom() external view returns (uint256);           // every registry entry before it is terminal
 
 // funding / registration (anyone)
 function fundWithAuthorization(Terms calldata t, uint256 validAfter, uint256 validBefore, bytes32 nonce, bytes calldata signature) external;
@@ -119,7 +124,7 @@ event Refunded(bytes32 indexed termsHash, uint256 toBuyer);
 event Cancelled(bytes32 indexed termsHash, uint256 toBuyer);
 event Swept(bytes32 indexed termsHash, address indexed token, uint256 toBuyer);
 
-error BadTerms(uint8 code); // 1 token 2 amount 3 seller 4 buyer0 5 bps 6 sla 7 deadline 8 operator0
+error BadTerms(uint8 code); // 1 token 2 amount 3 seller 4 buyer 5 bps 6 sla 7 deadline 8 operator0 9 reviewWindow (additive)
 error NotAuthorized(); error BadKey(); error BadStatus(uint8 status); error Underfunded(uint256 have, uint256 need);
 error TooEarly(uint256 at); error TooLate(uint256 at); error AlreadyRegistered(); error BadSignature();
 error SignatureExpired(); error ManifestMismatch(); error ChargeTooHigh(uint256 max);
@@ -128,6 +133,14 @@ error SignatureExpired(); error ManifestMismatch(); error ChargeTooHigh(uint256 
 Validity `valid(T)` (register / fundWithAuthorization / release): `token == USDC`, `seller == SELLER`, `buyer != 0`,
 `operator != 0`, `MIN_AMOUNT <= amount <= MAX_AMOUNT`, `block.timestamp < deadline <= block.timestamp + MAX_LIFETIME`
 (checked at registration), `dueAt == 0 || dueAt < deadline`, `slaFloorBps <= 10000`, `killFeeBps <= 10000`.
+Additive restrictions (audit fixes; each only rejects Terms that could strand or lock funds):
+- `buyer ∉ {factory, VAULT_IMPL, USDC}` → `BadTerms(4)` (a refund there has no exit), and at registration only
+  `!USDC.isBlacklisted(buyer)` → `BadTerms(4)`, checked before any EIP-3009 pull (an already-blacklisted buyer could never
+  be refunded). A buyer blacklisted after registration is handled by the keeper skip below.
+- `killFeeBps <= MAX_KILL_FEE_BPS (5000)` → `BadTerms(5)` (Instant and Studio alike).
+- `reviewWindow <= MAX_REVIEW_WINDOW (14 days)` → `BadTerms(9)`. Worst-case lock of a registered order: deadline
+  (≤ 30 days) + review (≤ 14 days) + `RELEASE_GRACE` (3 days) = 47 days after registration.
+The `isBlacklisted` / `paused` queries are best-effort: a failing or malformed answer reads as "not blocked" (fail open).
 
 `payoutAt(T, ts)`:
 ```
@@ -143,21 +156,43 @@ State machine (E = escrowOf(hashTerms(T)); "bal" = T.token balance of E; pay-out
 |---|---|---|---|---|
 | None | `fundWithAuthorization` | valid(T); unregistered | Open | USDC `transferWithAuthorization(T.buyer → E, T.amount, …, signature)` (bytes overload) then register |
 | None | `register` | valid(T); bal ≥ amount | Open | — |
-| Open | `release` (rw == 0) | seller/operator; keccak256(key) == keyHash; now ≤ deadline; `contentHash == 0 ∨ manifestHash == contentHash`; bal ≥ amount; `charge ≤ payoutAt(T, now)` | Released | seller ← charge; buyer ← bal − charge |
+| Open | `release` (rw == 0) | seller/operator; keccak256(key) == keyHash; now ≤ deadline; `contentHash == 0 ∨ manifestHash == contentHash`; bal ≥ amount; `charge ≤ payoutAt(T, now)` | Released | seller ← charge; buyer ← bal − charge (best effort) |
 | Open | `deliver` (rw > 0) | seller/operator; now ≤ deadline; bal ≥ amount | Delivered (deliveredAt = now) | — |
 | Delivered | `decide/decideBySig(accept=true)` | buyer (or buyer sig, ECDSA first then ERC-1271); now < deliveredAt + rw | Delivered (accepted) | — |
-| Delivered | `decide/decideBySig(accept=false)` | same; !accepted | Rejected | seller ← min(amount·killFeeBps/1e4, bal); buyer ← rest |
-| Delivered | `release` (rw > 0) | seller/operator; key ok; manifestHash == stored; (accepted ∨ now ≥ deliveredAt + rw); now ≤ deliveredAt + rw + RELEASE_GRACE; `charge ≤ payoutAt(T, deliveredAt)` | Released | seller ← charge; buyer ← rest |
+| Delivered | `decide/decideBySig(accept=false)` | same; !accepted | Rejected | seller ← min(amount·killFeeBps/1e4, bal); buyer ← rest (best effort) |
+| Delivered | `release` (rw > 0) | seller/operator; key ok; manifestHash == stored; (accepted ∨ now ≥ deliveredAt + rw); now ≤ deliveredAt + rw + RELEASE_GRACE; `charge ≤ payoutAt(T, deliveredAt)` | Released | seller ← charge; buyer ← rest (best effort) |
 | None/Open/Delivered | `cancel` | seller/operator | Cancelled | buyer ← bal (no clone deploy if bal == 0) |
 | None/Open | `refund` | now > deadline | Refunded | buyer ← bal |
 | Delivered | `refund` | now > deliveredAt + rw + RELEASE_GRACE | Refunded | buyer ← bal |
 | terminal | `sweep(T, T.token)` | — | same | buyer ← bal |
 | any | `sweep(T, other token or address(0))` | — | same | buyer ← all of that asset |
 
-`refundExpired(maxScan)`: iterate `registry[scanFrom … scanFrom+maxScan)`, refund eligible entries, advance `scanFrom` only across a
-contiguous terminal prefix. `refundableCount(maxScan)` is the matching view (KeeperHub condition input).
-All mutators `nonReentrant`; checks-effects-interactions. Unregistered T (status None) can still be refunded/cancelled/swept
-(funds can always exit to `T.buyer`). Payout to a seller requires `seller == SELLER` and `token == USDC`.
+Best-effort buyer push (additive, audit L1): in `release` and in a reject, the seller's share is pushed first and strictly
+(a failure reverts the call); the buyer's share (change / remainder) is pushed best-effort. If USDC refuses it (buyer
+blacklisted, or USDC paused when the seller's share is 0), the call still succeeds, the amount stays at E, and `Released.toBuyer` / `OrderView.toBuyer` report what was
+actually delivered (0). Afterwards only `sweep(T, T.token)` can move it, and only to `T.buyer` (`Swept`). So
+`toSeller + toBuyer + Σ Swept` is always the exact outflow. An out-of-gas failure of the push is not swallowed (the call
+reverts), so neither a gas-starving caller nor `eth_estimateGas` can make the buyer push fail silently. `refund`, `cancel`
+and `sweep` stay strict. `Released` is now emitted after the transfers (same fields).
+
+`refundExpired(maxScan)` (rotating window, additive semantics, audit M1): the live range is `[scanFrom, registryLength)`.
+A call inspects `n = min(maxScan, registryLength − scanFrom)` entries starting at a private cursor (read clamped into the
+live range), wrapping from `registryLength − 1` back to `scanFrom`, so no entry is visited twice per call. Eligible entries
+are refunded; an entry whose transfer fails (USDC paused, buyer or E blacklisted) is skipped without reverting and stays
+non-terminal (`refund(T)` stays available). The cursor then moves to the entry after the window, so consecutive calls rotate
+over the whole live range and a never-terminal entry cannot starve the entries behind it. `scanFrom` keeps its meaning:
+it advances only across a contiguous terminal prefix starting at `scanFrom` (as far as the window saw it).
+`refundableCount(maxScan)` inspects exactly the same window and counts entries that are refundable (Open with
+now > deadline, or Delivered with now > deliveredAt + rw + RELEASE_GRACE) and payable (USDC not paused, neither T.buyer
+nor E blacklisted). It therefore equals what `refundExpired(maxScan)` would return if called in the same state.
+`refundableCount(type(uint256).max)` is the exact count over the whole live range: keepers should use it (or
+`registryLength() − scanFrom()`) as the condition, with any `refundExpired(k)` as the action. Every action advances the
+rotation by `min(k, live)` entries, so the loop terminates with the count at 0. A bounded condition such as
+`refundableCount(50)` can read 0 while refundable orders sit more than 50 entries past the cursor.
+All mutators `nonReentrant`; checks-effects-interactions, except three deliberate USDC-only interactions before an effect:
+the EIP-3009 pull in `fundWithAuthorization`, the keeper push in `refundExpired` (a failed push must leave the order
+untouched), and the best-effort buyer push (the delivered amount is recorded after it).
+Unregistered T (status None) can still be refunded/cancelled/swept (funds can always exit to `T.buyer`). Payout to a seller requires `seller == SELLER` and `token == USDC`.
 
 Invariants (tests MUST encode): I1 tokens leaving any E go only to T.buyer or T.seller · I2 seller paid ≤ T.amount per T ·
 I3 seller paid > 0 ⇒ (Released ∧ keccak(key) == keyHash ∧ before deadline/grace) ∨ (Rejected ∧ fee ≤ killFee) · I4 at most one terminal
@@ -238,10 +273,19 @@ body `{}`. v1 fallback (`X402_WIRE=v1`): JSON body only, `network:"base"`, `maxA
 `keyframe_refund` (evm; `action: refund|sweep|reject`) · `keyframe_review` (data) · `keyframe_orders` (data).
 Exact zod schemas live in `plugin/src/schemas.ts` and are snapshotted to `plugin/tool-catalog.json` (CI diff gate).
 Proposal tools return ONLY the starter's strict proposal schemas; human guidance goes in `content[].text`.
+Inputs of the payment tools (pre-upload revision, 2026-10-17): `keyframe_commission` / `keyframe_commission_direct`
+`{quote_id, buyer, terms_hash}`, all required (from `keyframe_quote`'s / `keyframe_status`'s `next.input`);
+`keyframe_status` adds an optional `buyer`. Plugin-only fields, never sent to the API.
 
 Plugin checks before ANY proposal: factory ∈ `KEYFRAME_FACTORIES` (status active), `T.seller ∈ KEYFRAME_SELLERS`,
 `T.operator ∈ KEYFRAME_OPERATORS`, `T.token == USDC`, `amount <= KEYFRAME_MAX_AMOUNT <= 50 USDC`, recompute termsHash and E locally,
-pre-fetch the live 402 and assert single version, scheme exact, Base, USDC, `payTo == E`, `amount == T.amount`.
+pre-fetch the live 402 and assert single version, exactly one requirement (`accepts.length == 1`), scheme exact, Base, USDC,
+`payTo == E`, `amount == T.amount`. Payment proposals also require the re-fetched deal to hash to the input `terms_hash`
+with `T.buyer == buyer`, and `T.reviewWindow <= 14 days`, `T.killFeeBps <= 5000`. Refund-family proposals require 2
+agreeing Base RPCs. Review "changes" typed data is built by the plugin: `ChangeRequest(bytes32 termsHash,uint256 deadline)`
+under the Keyframe Escrow domain (ADR-010). After a change request `keyframe_review` accepts/rejects until the order view's
+`changes.accept_by` (also after the on-chain review window, ADR-019). A `final` quote with `payable: false` or a paid
+response with `charged: "unknown"` is never paid again (poll `keyframe_status`).
 
 ## 9. Plugin env vars (names frozen; values editable after the lock; embedded defaults for offline conformance)
 

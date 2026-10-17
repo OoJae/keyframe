@@ -7,12 +7,25 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {Test} from "forge-std/Test.sol";
 import {SymTest} from "halmos-cheatcodes/SymTest.sol";
 
-/// @notice Plain ERC-20 (no hooks, no blacklist) standing in for USDC in symbolic runs.
+/// @notice ERC-20 standing in for USDC in symbolic runs: no hooks, plus FiatToken-style `isBlacklisted` / `paused`
+///         views and a blacklist that makes transfers from or to a listed address revert (empty by default).
 contract SymToken is ERC20 {
+    mapping(address account => bool) public isBlacklisted;
+    bool public paused;
+
     constructor() ERC20("Sym USD", "SUSD") {}
 
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
+    }
+
+    function setBlacklisted(address account, bool on) external {
+        isBlacklisted[account] = on;
+    }
+
+    function _update(address from, address to, uint256 value) internal override {
+        require(!isBlacklisted[from] && !isBlacklisted[to], "blacklisted");
+        super._update(from, to, value);
     }
 }
 
@@ -251,6 +264,57 @@ contract KeyframeEscrowSymTest is SymTest, Test {
             assert(token.balanceOf(BUYER) + token.balanceOf(SELLER) == AMOUNT);
         } else {
             assert(token.balanceOf(SELLER) == 0);
+        }
+    }
+
+    /// Audit L1: whatever the time, the charge, a donation to E and whether the buyer can receive, a release the guards
+    /// allow pays the seller exactly `charge`, and the change goes to the buyer or stays at E (`toBuyer` reports which).
+    /// @dev Halmos models gas as unconstrained, so the out-of-gas guard after a refused buyer push may revert; liveness
+    ///      is therefore asserted for a payable buyer and the outcome for every successful call.
+    function check_releasePaysSellerDespiteUnpayableBuyer(uint256 charge, uint256 extra, bool blocked, uint32 dt)
+        public
+    {
+        vm.assume(extra <= 1e30);
+        token.mint(eInstant, extra);
+        token.setBlacklisted(BUYER, blocked);
+        vm.warp(T0 + dt);
+        vm.assume(block.timestamp <= instantT.deadline);
+        vm.assume(charge <= factory.payoutAt(instantT, block.timestamp));
+        vm.prank(OPERATOR);
+        (bool ok,) = address(factory).call(abi.encodeCall(IF.release, (instantT, KEY, charge, instantT.contentHash)));
+        assert(ok || blocked);
+        if (!ok) return;
+        uint256 change = AMOUNT + extra - charge;
+        IF.OrderView memory v = factory.order(factory.hashTerms(instantT));
+        assert(token.balanceOf(SELLER) == charge && v.toSeller == charge);
+        assert(v.status == IF.Status.Released);
+        if (blocked) {
+            assert(token.balanceOf(eInstant) == change && token.balanceOf(BUYER) == 0 && v.toBuyer == 0);
+        } else {
+            assert(token.balanceOf(BUYER) == change && token.balanceOf(eInstant) == 0 && v.toBuyer == change);
+        }
+    }
+
+    /// Audit M1: for any time, window size and buyer blacklist state, refundExpired returns exactly what
+    /// refundableCount predicted, and a blacklisted buyer's orders are neither counted nor touched.
+    function check_keeperCountMatchesRefunds(uint8 m, uint32 dt, bool blocked) public {
+        token.setBlacklisted(BUYER, blocked);
+        vm.warp(T0 + dt);
+        // Concrete per path: OZ Math.min is branchless (a multiplication), which halmos cannot bound symbolically.
+        uint256 maxScan = 3;
+        if (m % 4 == 0) maxScan = 0;
+        else if (m % 4 == 1) maxScan = 1;
+        else if (m % 4 == 2) maxScan = 2;
+        uint256 expected = factory.refundableCount(maxScan);
+        (bool ok, bytes memory ret) = address(factory).call(abi.encodeCall(IF.refundExpired, (maxScan)));
+        if (!ok) {
+            assert(blocked); // only the (symbolic-gas) out-of-gas guard after a refused push can revert
+            return;
+        }
+        assert(abi.decode(ret, (uint256)) == expected);
+        if (blocked) {
+            assert(expected == 0);
+            assert(token.balanceOf(eInstant) == AMOUNT && token.balanceOf(eStudio) == AMOUNT);
         }
     }
 

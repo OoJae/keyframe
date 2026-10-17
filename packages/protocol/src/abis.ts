@@ -55,6 +55,9 @@ export const keyframeFactoryAbi = [
   view("MAX_AMOUNT", "uint256"),
   view("MAX_LIFETIME", "uint64"),
   view("RELEASE_GRACE", "uint64"),
+  view("MAX_REVIEW_WINDOW", "uint32"),
+  view("MAX_KILL_FEE_BPS", "uint16"),
+  view("scanFrom", "uint256"),
   // views
   {
     type: "function",

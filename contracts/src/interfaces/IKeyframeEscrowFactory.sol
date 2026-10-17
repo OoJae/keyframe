@@ -56,7 +56,9 @@ interface IKeyframeEscrowFactory {
     event Cancelled(bytes32 indexed termsHash, uint256 toBuyer);
     event Swept(bytes32 indexed termsHash, address indexed token, uint256 toBuyer);
 
-    /// @dev 1 token, 2 amount, 3 seller, 4 buyer0, 5 bps, 6 sla, 7 deadline, 8 operator0
+    /// @dev 1 token, 2 amount, 3 seller, 4 buyer (zero, the factory, VAULT_IMPL or USDC; at registration also a
+    ///      USDC-blacklisted buyer), 5 bps (slaFloorBps > 10000 or killFeeBps > MAX_KILL_FEE_BPS), 6 sla, 7 deadline,
+    ///      8 operator0, 9 reviewWindow > MAX_REVIEW_WINDOW (codes 9 and the extra 4/5 cases are additive to v1)
     error BadTerms(uint8 code);
     error NotAuthorized();
     error BadKey();
@@ -78,6 +80,8 @@ interface IKeyframeEscrowFactory {
     function MAX_AMOUNT() external view returns (uint256);
     function MAX_LIFETIME() external view returns (uint64);
     function RELEASE_GRACE() external view returns (uint64);
+    function MAX_REVIEW_WINDOW() external view returns (uint32); // additive: 14 days
+    function MAX_KILL_FEE_BPS() external view returns (uint16); // additive: 5000 (50%)
 
     // views
     function hashTerms(Terms calldata t) external view returns (bytes32);
@@ -86,6 +90,7 @@ interface IKeyframeEscrowFactory {
     function order(bytes32 termsHash) external view returns (OrderView memory);
     function registryLength() external view returns (uint256);
     function refundableCount(uint256 maxScan) external view returns (uint256);
+    function scanFrom() external view returns (uint256); // additive: every registry entry before it is terminal
 
     // funding / registration (anyone)
     function fundWithAuthorization(

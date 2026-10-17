@@ -2,19 +2,20 @@
 pragma solidity 0.8.30;
 
 import {KeyframeEscrowFactory} from "../../src/KeyframeEscrowFactory.sol";
+import {IFiatTokenV2_2} from "../../src/interfaces/IFiatTokenV2_2.sol";
 import {IKeyframeEscrowFactory as IF} from "../../src/interfaces/IKeyframeEscrowFactory.sol";
 import {KeyframeBase} from "../utils/KeyframeBase.sol";
 import {PlainDelegate, Self1271Delegate} from "../utils/Mocks.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-interface IFiatTokenV2_2 {
+/// @notice The FiatTokenV2_2 admin and EIP-3009 surface the fork suite drives (on top of the factory's read-only subset).
+interface IFiatTokenFork is IFiatTokenV2_2 {
     function DOMAIN_SEPARATOR() external view returns (bytes32);
     function version() external view returns (string memory);
     function blacklister() external view returns (address);
     function pauser() external view returns (address);
     function blacklist(address account) external;
     function unBlacklist(address account) external;
-    function isBlacklisted(address account) external view returns (bool);
     function pause() external;
     function unpause() external;
     function authorizationState(address authorizer, bytes32 nonce) external view returns (bool);
@@ -39,7 +40,7 @@ contract BaseForkTest is KeyframeBase {
     uint256 internal constant FORK_BLOCK = 52_705_000;
     string internal constant GAS_GROUP = "KeyframeFork";
 
-    IFiatTokenV2_2 internal fiat;
+    IFiatTokenFork internal fiat;
 
     function setUp() public {
         string memory rpc = vm.envOr("BASE_RPC_URL", string(""));
@@ -50,7 +51,7 @@ contract BaseForkTest is KeyframeBase {
         vm.createSelectFork(rpc, vm.envOr("FORK_BLOCK", FORK_BLOCK));
         _actors();
         usdc = BASE_USDC;
-        fiat = IFiatTokenV2_2(BASE_USDC);
+        fiat = IFiatTokenFork(BASE_USDC);
         factory = new KeyframeEscrowFactory(BASE_USDC, seller);
     }
 
@@ -358,6 +359,7 @@ contract BaseForkTest is KeyframeBase {
         vm.warp(t.deadline + 1);
         vm.expectRevert(bytes("Blacklistable: account is blacklisted"));
         factory.refund(t);
+        assertEq(factory.refundableCount(10), 0, "the keeper condition does not count an unpayable order");
         assertEq(factory.refundExpired(10), 0, "keeper batch skips, does not revert");
         assertEq(uint8(_status(t)), uint8(IF.Status.Open));
         vm.prank(fiat.blacklister());
@@ -379,5 +381,112 @@ contract BaseForkTest is KeyframeBase {
         vm.prank(operator);
         factory.release(t, KEY, 4_000_000, MANIFEST);
         assertEq(_bal(seller), 4_000_000);
+    }
+
+    // ───────────────────────────── audit regressions (M1, L1) on the real FiatTokenV2_2 ─────────────────────────────
+
+    function _blacklist(address a) internal {
+        vm.prank(fiat.blacklister());
+        fiat.blacklist(a);
+    }
+
+    /// @dev M1: the registration-time check reads the real proxy's isBlacklisted, before any EIP-3009 pull.
+    function test_fork_M1_blacklistedBuyerRejectedAtRegistration() public {
+        IF.Terms memory t = _instant(1_000_000);
+        _give(buyer, t.amount);
+        bytes32 nonce = keccak256("fork-m1-reg");
+        bytes memory sig = _authFor(t, nonce);
+        _blacklist(buyer);
+        assertTrue(fiat.isBlacklisted(buyer));
+        vm.expectRevert(abi.encodeWithSelector(IF.BadTerms.selector, uint8(4)));
+        factory.fundWithAuthorization(t, 0, block.timestamp + 5 minutes, nonce, sig);
+        assertFalse(fiat.authorizationState(buyer, nonce), "no pull attempted");
+        vm.expectRevert(abi.encodeWithSelector(IF.BadTerms.selector, uint8(4)));
+        factory.register(t);
+    }
+
+    /// @dev Port of the auditor's AuditForkPoC: 20 entries whose buyer Circle blacklists after registration used to
+    ///      pin the keeper forever (refundExpired(20) == 0 on every call, victim never refunded). Now the window rotates
+    ///      past them, the victim is refunded on the second call and the condition then goes false.
+    function test_fork_M1_unpayableEntriesDoNotPinKeeper() public {
+        address sanctioned = makeAddr("sanctioned");
+        uint64 dl = uint64(block.timestamp + 1 hours);
+        for (uint256 i; i < 20; ++i) {
+            IF.Terms memory p = _instant(100_000);
+            p.buyer = sanctioned;
+            p.salt = keccak256(abi.encode("poison", i));
+            p.deadline = dl;
+            address e = _e(p);
+            _give(attacker, p.amount);
+            vm.prank(attacker);
+            IERC20(usdc).transfer(e, p.amount);
+            vm.prank(attacker);
+            factory.register(p);
+        }
+        IF.Terms memory victim = _instant(5_000_000);
+        victim.salt = keccak256("victim");
+        victim.deadline = dl;
+        _open(victim);
+        _blacklist(sanctioned);
+        vm.warp(dl + 1);
+
+        assertEq(factory.refundableCount(50), 1, "only the payable victim counts");
+        vm.prank(keeper);
+        assertEq(factory.refundExpired(20), 0, "first window: 20 unpayable entries, skipped without reverting");
+        vm.snapshotGasLastFrame(GAS_GROUP, "refundExpired_20_unpayable_deployClones");
+        assertEq(factory.refundableCount(50), 1);
+        vm.prank(keeper);
+        assertEq(factory.refundExpired(20), 1, "the rotation reaches the victim");
+        assertEq(uint8(_status(victim)), uint8(IF.Status.Refunded));
+        assertEq(_bal(buyer), 5_000_000);
+        assertEq(factory.refundableCount(type(uint256).max), 0, "the keeper condition goes false");
+        assertEq(factory.scanFrom(), 0, "scanFrom stays in front of the unpayable entries");
+        vm.prank(keeper);
+        factory.refundExpired(20);
+        vm.snapshotGasLastFrame(GAS_GROUP, "refundExpired_20_unpayable_existingClones");
+    }
+
+    /// @dev L1 on the real token: a donated unit forces change > 0 and the buyer is blacklisted; the seller is still
+    ///      paid, the change waits at E and is swept to the buyer once Circle lifts the blacklist.
+    function test_fork_L1_unpayableBuyerCannotBlockSellerPayout() public {
+        IF.Terms memory t = _instant(4_000_000);
+        _fundByAuth(t, keccak256("fork-l1"));
+        address e = _e(t);
+        _give(attacker, 1);
+        vm.prank(attacker);
+        IERC20(usdc).transfer(e, 1);
+        _blacklist(buyer);
+        uint256 buyerBefore = _bal(buyer);
+        vm.prank(operator);
+        factory.release(t, KEY, 3_000_000, MANIFEST);
+        vm.snapshotGasLastFrame(GAS_GROUP, "release_instant_unpayableBuyer_deploysClone");
+        assertEq(_bal(seller), 3_000_000, "seller paid");
+        assertEq(_bal(e), 1_000_001, "change stays at E");
+        assertEq(factory.order(_h(t)).toBuyer, 0);
+        vm.expectRevert(bytes("Blacklistable: account is blacklisted"));
+        factory.sweep(t, BASE_USDC);
+        vm.prank(fiat.blacklister());
+        fiat.unBlacklist(buyer);
+        factory.sweep(t, BASE_USDC);
+        assertEq(_bal(buyer) - buyerBefore, 1_000_001);
+        assertEq(_bal(e), 0);
+    }
+
+    /// @dev M1: while USDC is paused nothing can be paid, so the keeper condition reads 0 (and the batch agrees).
+    function test_fork_M1_pausedUsdcKeeperConditionIsZero() public {
+        IF.Terms memory t = _instant(1_000_000);
+        _fundByAuth(t, keccak256("fork-m1-pause"));
+        vm.warp(t.deadline + 1);
+        assertEq(factory.refundableCount(10), 1);
+        vm.prank(fiat.pauser());
+        fiat.pause();
+        assertTrue(fiat.paused());
+        assertEq(factory.refundableCount(10), 0);
+        assertEq(factory.refundExpired(10), 0);
+        vm.prank(fiat.pauser());
+        fiat.unpause();
+        assertEq(factory.refundableCount(10), 1);
+        assertEq(factory.refundExpired(10), 1);
+        assertEq(_bal(buyer), 1_000_000);
     }
 }

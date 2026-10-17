@@ -107,12 +107,13 @@ contract KeyframeInvariants is Test {
         assertEq(seller.balance + junk.balanceOf(seller), 0, "seller only ever receives USDC payouts");
     }
 
-    /// I9: no T with amount > MAX_AMOUNT (or a foreign seller) is registered or pays a seller.
+    /// I9: no T with amount > MAX_AMOUNT (nor a foreign seller, nor killFeeBps / reviewWindow above the on-chain caps)
+    ///     is registered or pays a seller.
     function invariant_I9_overCapNeverProgresses() public view {
         assertFalse(handler.overCapProgressed());
         for (uint256 i; i < _entries(); ++i) {
-            (IF.Terms memory t, bytes32 h,,) = handler.entry(i);
-            if (t.amount <= factory.MAX_AMOUNT() && t.seller == seller) continue;
+            (, bytes32 h,,) = handler.entry(i);
+            if (!handler.isInvalid(i)) continue;
             IF.OrderView memory v = factory.order(h);
             assertEq(v.openedAt, 0);
             assertTrue(v.status == IF.Status.None || v.status == IF.Status.Refunded || v.status == IF.Status.Cancelled);
@@ -148,6 +149,32 @@ contract KeyframeInvariants is Test {
         assertLe(scanFrom, len);
         for (uint256 i; i < scanFrom; ++i) {
             assertGe(uint8(factory.order(handler.ghostRegistry(i)).status), uint8(IF.Status.Released));
+        }
+    }
+
+    /// Keeper liveness (audit M1): from any reachable state, ceil(live / k) calls of refundExpired(k) refund exactly
+    /// what refundableCount(type(uint256).max) counted (blacklisted buyers excluded), and nothing refundable is left.
+    /// Runs on a state snapshot, so the campaign itself is unaffected.
+    function invariant_keeperRotationReachesEveryRefundable() public {
+        uint256 snap = vm.snapshotState();
+        uint256 expected = factory.refundableCount(type(uint256).max);
+        uint256 live = factory.registryLength() - factory.scanFrom();
+        uint256 k = 1 + factory.registryLength() % 7;
+        uint256 got;
+        for (uint256 c; c < (live + k - 1) / k; ++c) {
+            got += factory.refundExpired(k);
+        }
+        assertEq(got, expected);
+        assertEq(factory.refundableCount(type(uint256).max), 0);
+        vm.revertToState(snap);
+    }
+
+    /// L1 accounting: OrderView.toBuyer reports only what actually reached the buyer (undelivered change stays at E
+    /// and later leaves through sweep), so it never exceeds the observed USDC transfers from E to T.buyer.
+    function invariant_toBuyerNeverOverstated() public view {
+        for (uint256 i; i < _entries(); ++i) {
+            (, bytes32 h,,) = handler.entry(i);
+            assertLe(factory.order(h).toBuyer, handler.buyerPaid(h));
         }
     }
 

@@ -99,13 +99,29 @@ contract Handler is CommonBase, StdCheats, StdUtils {
         return ghostRegistry.length;
     }
 
+    function isInvalid(uint256 i) external view returns (bool) {
+        return _invalid(pool[i].t);
+    }
+
+    /// @dev Terms the factory must never register or pay out on: over the amount cap, a foreign seller, or a kill fee /
+    ///      review window above the on-chain caps.
+    function _invalid(IF.Terms storage t) internal view returns (bool) {
+        return t.amount > factory.MAX_AMOUNT() || t.seller != factory.SELLER()
+            || t.killFeeBps > factory.MAX_KILL_FEE_BPS() || t.reviewWindow > factory.MAX_REVIEW_WINDOW();
+    }
+
+    /// @dev True when a push of E's USDC to T.buyer would fail because Circle blacklisted the buyer.
+    function _buyerBlocked(Entry storage en) internal view returns (bool) {
+        return usdc.isBlacklisted(en.t.buyer) && usdc.balanceOf(en.e) != 0;
+    }
+
     // ───────────────────────────── pool ─────────────────────────────
 
     function _addTerms(uint256 seed) internal {
         if (pool.length >= MAX_POOL) return;
         uint256 bIdx = seed % 2;
         bytes32 key = keccak256(abi.encode("K", seed));
-        uint256 kind = (seed >> 8) % 10;
+        uint256 kind = (seed >> 8) % 12;
         IF.Terms memory t;
         t.buyer = buyers[bIdx];
         t.seller = seller;
@@ -121,7 +137,12 @@ contract Handler is CommonBase, StdCheats, StdUtils {
             t.contentHash = keccak256(abi.encode("manifest", seed)); // Instant, render-before-pay
         } else if (kind <= 6) {
             t.reviewWindow = uint32(bound(seed >> 96, 1 hours, 2 days)); // Studio
-            t.killFeeBps = uint16(bound(seed >> 128, 0, 10_000));
+            t.killFeeBps = uint16(bound(seed >> 128, 0, factory.MAX_KILL_FEE_BPS()));
+        } else if (kind == 10) {
+            t.reviewWindow = uint32(bound(seed >> 96, factory.MAX_REVIEW_WINDOW() + 1, type(uint32).max)); // over cap
+        } else if (kind == 11) {
+            t.reviewWindow = 1 days;
+            t.killFeeBps = uint16(bound(seed >> 128, factory.MAX_KILL_FEE_BPS() + 1, 10_000)); // over cap
         } else if (kind == 7) {
             t.amount = bound(seed >> 16, factory.MAX_AMOUNT() + 1, 2 * factory.MAX_AMOUNT()); // over cap
         } else if (kind == 8) {
@@ -213,7 +234,7 @@ contract Handler is CommonBase, StdCheats, StdUtils {
     function _checkSellerPayment(Entry storage en, IF.Status prev, uint256 value) internal {
         IF.OrderView memory v = factory.order(en.h);
         if (_terminal(prev)) sellerPaidAfterTerminal = true;
-        if (en.t.amount > factory.MAX_AMOUNT() || en.t.seller != factory.SELLER()) overCapProgressed = true;
+        if (_invalid(en.t)) overCapProgressed = true;
         if (v.status == IF.Status.Released) {
             bool keyOk = keccak256(abi.encodePacked(v.key)) == en.t.keyHash;
             bool inTime = en.t.reviewWindow == 0
@@ -247,8 +268,16 @@ contract Handler is CommonBase, StdCheats, StdUtils {
         vm.warp(block.timestamp + bound(dt, 1 minutes, 12 hours));
     }
 
+    /// @dev Circle blacklists or clears a buyer at any time; about a third of these calls leave it blacklisted.
+    function setBuyerBlacklisted(uint256 who, uint256 seed) external tracked("blacklist") {
+        address b = buyers[who % 2];
+        if (seed % 3 == 0) usdc.blacklist(b);
+        else usdc.unBlacklist(b);
+    }
+
     function fundDirect(uint256 i, uint256 amountSeed, bool dust) external tracked("fundDirect") {
         Entry storage en = _pickWhere(i, _bit(IF.Status.None), ANY);
+        if (usdc.isBlacklisted(en.t.buyer)) return; // a blacklisted buyer cannot pay
         uint256 amt = dust ? bound(amountSeed, 1, 1000) : en.t.amount;
         vm.prank(en.t.buyer);
         usdc.transfer(en.e, amt);
@@ -293,14 +322,16 @@ contract Handler is CommonBase, StdCheats, StdUtils {
             try usdc.transferWithAuthorization(en.t.buyer, en.e, en.t.amount, 0, validBefore, nonce, sig) {} catch {}
         }
         vm.prank(keeper);
-        try factory.fundWithAuthorization(en.t, 0, validBefore, nonce, sig) {} catch {}
+        try factory.fundWithAuthorization(en.t, 0, validBefore, nonce, sig) {
+            if (_invalid(en.t)) overCapProgressed = true;
+        } catch {}
     }
 
     function register(uint256 i) external tracked("register") {
         Entry storage en = _pickWhere(i, _bit(IF.Status.None), ANY);
         vm.prank(attacker);
         try factory.register(en.t) {
-            if (en.t.amount > factory.MAX_AMOUNT()) overCapProgressed = true;
+            if (_invalid(en.t)) overCapProgressed = true;
         } catch {}
     }
 
@@ -319,8 +350,9 @@ contract Handler is CommonBase, StdCheats, StdUtils {
         }
     }
 
+    /// @dev A blacklisted buyer does not matter here: the seller push is strict, the change push best-effort (L1).
     function _releasable(Entry storage en, IF.OrderView memory v) internal view returns (bool) {
-        if (en.t.amount > factory.MAX_AMOUNT() || en.t.seller != factory.SELLER()) return false;
+        if (_invalid(en.t)) return false;
         if (usdc.balanceOf(en.e) < en.t.amount) return false;
         if (en.t.reviewWindow == 0) return v.status == IF.Status.Open && block.timestamp <= en.t.deadline;
         uint256 reviewEnd = uint256(v.deliveredAt) + en.t.reviewWindow;
@@ -397,7 +429,7 @@ contract Handler is CommonBase, StdCheats, StdUtils {
     function cancel(uint256 i, bool bySeller) external tracked("cancel") {
         Entry storage en = _pickWhere(i, _bit(IF.Status.None) | _bit(IF.Status.Open) | _bit(IF.Status.Delivered), ANY);
         IF.Status s = factory.order(en.h).status;
-        bool shouldWork = !_terminal(s);
+        bool shouldWork = !_terminal(s) && !_buyerBlocked(en);
         vm.prank(bySeller ? en.t.seller : operator);
         try factory.cancel(en.t) {
             successes["cancel"]++;
@@ -413,6 +445,7 @@ contract Handler is CommonBase, StdCheats, StdUtils {
                 && block.timestamp > en.t.deadline)
             || (v.status == IF.Status.Delivered
                 && block.timestamp > uint256(v.deliveredAt) + en.t.reviewWindow + factory.RELEASE_GRACE());
+        shouldWork = shouldWork && !_buyerBlocked(en);
         vm.prank(attacker);
         try factory.refund(en.t) {
             successes["refund"]++;
@@ -436,6 +469,7 @@ contract Handler is CommonBase, StdCheats, StdUtils {
         Entry storage en = _pick(i);
         address token = which % 3 == 0 ? address(usdc) : which % 3 == 1 ? address(junk) : address(0);
         bool shouldWork = token != en.t.token || _terminal(factory.order(en.h).status);
+        if (token == address(usdc)) shouldWork = shouldWork && !_buyerBlocked(en);
         uint256 buyerEthBefore = en.t.buyer.balance;
         uint256 escrowEthBefore = en.e.balance;
         vm.prank(attacker);

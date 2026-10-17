@@ -135,7 +135,7 @@ contract FactoryStudioTest is KeyframeBase {
     }
 
     function test_decide_rejectFeeCappedByBalance() public {
-        IF.Terms memory t = _studio(25_000_000, RW, 10_000);
+        IF.Terms memory t = _studio(25_000_000, RW, 5000);
         _openDelivered(t);
         deal(usdc, _e(t), 1000); // not reachable via the protocol
         vm.prank(buyer);

@@ -23,6 +23,8 @@ contract FactoryViewsTest is KeyframeBase {
         assertEq(factory.MAX_AMOUNT(), 50_000_000);
         assertEq(factory.MAX_LIFETIME(), 30 days);
         assertEq(factory.RELEASE_GRACE(), 3 days);
+        assertEq(factory.MAX_REVIEW_WINDOW(), 14 days);
+        assertEq(factory.MAX_KILL_FEE_BPS(), 5000);
         assertEq(factory.registryLength(), 0);
         assertEq(factory.scanFrom(), 0);
     }

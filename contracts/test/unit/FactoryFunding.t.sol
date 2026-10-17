@@ -50,7 +50,9 @@ contract FactoryFundingTest is KeyframeBase {
         t.deadline = uint64(block.timestamp + 1);
         t.dueAt = uint64(block.timestamp);
         t.slaFloorBps = 0;
-        t.killFeeBps = 10_000;
+        t.killFeeBps = factory.MAX_KILL_FEE_BPS();
+        t.reviewWindow = factory.MAX_REVIEW_WINDOW();
+        t.contentHash = bytes32(0);
         _open(t);
         assertEq(factory.registryLength(), 2);
     }
@@ -107,6 +109,64 @@ contract FactoryFundingTest is KeyframeBase {
         t.killFeeBps = 10_001;
         vm.expectRevert(_badTerms(5));
         factory.register(t);
+    }
+
+    /// @dev Audit L2: the kill fee is capped on-chain at MAX_KILL_FEE_BPS (50%), for Instant and Studio Terms alike.
+    function test_register_revert_killFeeAboveCap() public {
+        IF.Terms memory t = _studio(25_000_000, 1 days, 5001);
+        _fundEscrow(t, t.amount);
+        vm.expectRevert(_badTerms(5));
+        factory.register(t);
+        t.killFeeBps = 5000; // a different T, so a different E
+        _open(t);
+        assertEq(uint8(_status(t)), uint8(IF.Status.Open));
+    }
+
+    /// @dev Audit L2: a Studio review window is capped at MAX_REVIEW_WINDOW (14 days); BadTerms(9) is additive to v1.
+    function test_register_revert_reviewWindowAboveCap() public {
+        IF.Terms memory t = _studio(10_000_000, 14 days + 1, 0);
+        _fundEscrow(t, t.amount);
+        vm.expectRevert(_badTerms(9));
+        factory.register(t);
+        t.reviewWindow = type(uint32).max; // the audit's ~136-year lock
+        vm.expectRevert(_badTerms(9));
+        factory.register(t);
+        t.reviewWindow = 14 days;
+        _open(t);
+        assertEq(factory.order(_h(t)).reviewWindow, 14 days);
+    }
+
+    /// @dev Audit Info 1: refunds to the factory, VAULT_IMPL or USDC would be stranded, so such buyers are invalid.
+    function test_register_revert_buyerIsProtocolContract() public {
+        address[3] memory bad = [address(factory), factory.VAULT_IMPL(), usdc];
+        for (uint256 i; i < bad.length; ++i) {
+            IF.Terms memory t = _instant(1_000_000);
+            t.buyer = bad[i];
+            _fundEscrow(t, t.amount);
+            vm.expectRevert(_badTerms(4));
+            factory.register(t);
+            vm.expectRevert(_badTerms(4));
+            factory.fundWithAuthorization(t, 0, block.timestamp + 5 minutes, bytes32(i), "");
+        }
+    }
+
+    /// @dev Audit M1: an already-blacklisted buyer could never be refunded, so it is rejected at registration, before
+    ///      any EIP-3009 pull. A buyer blacklisted after registration is handled by the keeper skip (AuditRegressions).
+    function test_register_revert_blacklistedBuyer() public {
+        IF.Terms memory t = _instant(1_000_000);
+        _fundEscrow(t, t.amount);
+        _give(buyer, t.amount);
+        MockUSDC(usdc).blacklist(buyer);
+        vm.expectRevert(_badTerms(4));
+        factory.register(t);
+        bytes32 nonce = keccak256("n-bl");
+        bytes memory sig = _authFor(t, nonce);
+        vm.expectRevert(_badTerms(4));
+        factory.fundWithAuthorization(t, 0, block.timestamp + 5 minutes, nonce, sig);
+        assertFalse(MockUSDC(usdc).authorizationState(buyer, nonce), "no pull attempted");
+        MockUSDC(usdc).unBlacklist(buyer);
+        factory.register(t);
+        assertEq(uint8(_status(t)), uint8(IF.Status.Open));
     }
 
     function test_register_revert_dueAtNotBeforeDeadline() public {

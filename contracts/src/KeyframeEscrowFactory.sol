@@ -3,6 +3,7 @@ pragma solidity 0.8.30;
 
 import {KeyframeVault} from "./KeyframeVault.sol";
 import {IERC3009} from "./interfaces/IERC3009.sol";
+import {IFiatTokenV2_2} from "./interfaces/IFiatTokenV2_2.sol";
 import {IKeyframeEscrowFactory} from "./interfaces/IKeyframeEscrowFactory.sol";
 import {TermsLib} from "./libraries/TermsLib.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
@@ -26,6 +27,10 @@ contract KeyframeEscrowFactory is IKeyframeEscrowFactory, EIP712, ReentrancyGuar
     uint256 public constant MAX_AMOUNT = 50_000_000;
     uint64 public constant MAX_LIFETIME = 30 days;
     uint64 public constant RELEASE_GRACE = 3 days;
+    /// @notice Longest Studio review window; bounds how long a delivered order can hold the buyer's funds.
+    uint32 public constant MAX_REVIEW_WINDOW = 14 days;
+    /// @notice Largest kill fee (seller share of a rejected Studio order).
+    uint16 public constant MAX_KILL_FEE_BPS = 5000;
 
     uint16 private constant BPS = 10_000;
 
@@ -46,11 +51,16 @@ contract KeyframeEscrowFactory is IKeyframeEscrowFactory, EIP712, ReentrancyGuar
         uint256 toBuyer;
     }
 
+    /// @dev Keeper scan state, packed in one slot. `from` (public as `scanFrom()`): every registry entry before it is
+    ///      terminal. `cursor`: where the next keeper window starts; it is read clamped into [from, registry length).
+    struct Scan {
+        uint128 from;
+        uint128 cursor;
+    }
+
     mapping(bytes32 termsHash => Record) private _orders;
     bytes32[] private _registry;
-
-    /// @notice Registry index from which `refundExpired` scans; everything before it is terminal.
-    uint256 public scanFrom;
+    Scan private _scan;
 
     // forge-lint: disable-next-line(missing-zero-check)
     constructor(address usdc, address seller) EIP712(TermsLib.NAME, TermsLib.VERSION) {
@@ -96,10 +106,23 @@ contract KeyframeEscrowFactory is IKeyframeEscrowFactory, EIP712, ReentrancyGuar
         return _registry.length;
     }
 
-    function refundableCount(uint256 maxScan) external view returns (uint256 n) {
-        (uint256 start, uint256 end) = _window(maxScan);
-        for (uint256 i = start; i < end; ++i) {
-            if (_refundable(_orders[_registry[i]])) ++n;
+    /// @notice Registry index before which every entry is terminal (the start of the keeper's live range).
+    function scanFrom() external view returns (uint256) {
+        return _scan.from;
+    }
+
+    /// @notice How many orders `refundExpired(maxScan)` would refund if called now: the same window (see there), counting
+    ///         entries that are refundable and payable (USDC not paused; neither T.buyer nor E blacklisted).
+    /// @dev `refundableCount(type(uint256).max)` is the exact number over the whole live range [scanFrom, length); use
+    ///      that as the keeper condition. A smaller maxScan can return 0 while refundable orders sit further along.
+    function refundableCount(uint256 maxScan) external view returns (uint256 count) {
+        (uint256 from, uint256 i, uint256 n, uint256 len) = _window(maxScan);
+        if (n == 0 || _usdcFlag(abi.encodeCall(IFiatTokenV2_2.paused, ()))) return 0;
+        for (uint256 k; k < n; ++k) {
+            bytes32 h = _registry[i];
+            Record storage r = _orders[h];
+            if (_refundable(r) && _payable(r.buyer, escrowOf(h))) ++count;
+            if (++i == len) i = from;
         }
     }
 
@@ -155,19 +178,19 @@ contract KeyframeEscrowFactory is IKeyframeEscrowFactory, EIP712, ReentrancyGuar
         uint256 bal = IERC20(t.token).balanceOf(e);
         if (bal < t.amount) revert Underfunded(bal, t.amount);
         if (charge > maxCharge) revert ChargeTooHigh(maxCharge);
-        uint256 toBuyer = bal - charge; // charge <= maxCharge <= amount <= bal
 
         r.status = Status.Released;
         r.key = key;
         r.manifestHash = manifestHash;
         r.toSeller = charge;
-        r.toBuyer = toBuyer;
         r.finalAt = _now();
-        emit Released(h, key, manifestHash, charge, toBuyer);
 
-        _ensureClone(e, h, charge + toBuyer);
+        _ensureClone(e, h, bal);
         _push(e, t.token, t.seller, charge);
-        _push(e, t.token, t.buyer, toBuyer);
+        // charge <= maxCharge <= amount <= bal. Best effort: an unpayable buyer cannot block the seller's payout.
+        uint256 toBuyer = _tryPush(e, t.token, t.buyer, bal - charge);
+        r.toBuyer = toBuyer;
+        emit Released(h, key, manifestHash, charge, toBuyer);
     }
 
     function deliver(Terms calldata t, bytes32 manifestHash) external nonReentrant {
@@ -243,14 +266,20 @@ contract KeyframeEscrowFactory is IKeyframeEscrowFactory, EIP712, ReentrancyGuar
         _payBuyer(e, h, t, toBuyer);
     }
 
-    /// @notice Keeper entry point: refunds every eligible registered order in the next `maxScan` registry entries.
-    /// @dev A refund whose transfer fails (USDC paused, buyer blacklisted) is skipped rather than reverting the batch;
-    ///      such an entry stays non-terminal, so `scanFrom` stops in front of it.
+    /// @notice Keeper entry point: refunds every eligible order in a rotating window of the live registry range.
+    /// @dev Window: n = min(maxScan, length - scanFrom) entries, starting at a private cursor (clamped into
+    ///      [scanFrom, length)) and wrapping from length - 1 back to scanFrom, so no entry is visited twice per call.
+    ///      The cursor then moves to the entry after the window, so consecutive calls rotate over the whole live
+    ///      range and a never-terminal entry cannot starve the ones behind it. `scanFrom` still only advances over a
+    ///      contiguous terminal prefix. A refund whose transfer fails (USDC paused, buyer or E blacklisted) is
+    ///      skipped rather than reverting the batch; that entry stays non-terminal and `refund(T)` stays available.
     function refundExpired(uint256 maxScan) external nonReentrant returns (uint256 refunded) {
-        (uint256 start, uint256 end) = _window(maxScan);
-        uint256 next = start;
-        bool prefix = true;
-        for (uint256 i = start; i < end; ++i) {
+        (uint256 from, uint256 start, uint256 n, uint256 len) = _window(maxScan);
+        if (n == 0) return 0;
+        uint256 i = start;
+        uint256 next = from; // end of the terminal prefix starting at `from`, as far as this window saw it
+        bool prefix = i == from;
+        for (uint256 k; k < n; ++k) {
             bytes32 h = _registry[i];
             Record storage r = _orders[h];
             if (_refundable(r) && _tryRefundRegistered(h, r)) ++refunded;
@@ -258,8 +287,16 @@ contract KeyframeEscrowFactory is IKeyframeEscrowFactory, EIP712, ReentrancyGuar
                 if (_isTerminal(r.status)) next = i + 1;
                 else prefix = false;
             }
+            // Wrapping only happens when the window started after `from` (else it ends exactly here), so the prefix
+            // walk restarts at `from` with `next` still equal to `from`.
+            if (++i == len) {
+                i = from;
+                prefix = true;
+            }
         }
-        if (next != start) scanFrom = next;
+        // Both fit in 128 bits: they are registry indices.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        if (next != from || i != start) _scan = Scan(uint128(next), uint128(i));
     }
 
     /// @notice Late, duplicate or stray assets at E go to T.buyer. T.token only once the order is terminal; any
@@ -282,13 +319,18 @@ contract KeyframeEscrowFactory is IKeyframeEscrowFactory, EIP712, ReentrancyGuar
         if (t.token != USDC) revert BadTerms(1);
         if (t.amount < MIN_AMOUNT || t.amount > MAX_AMOUNT) revert BadTerms(2);
         if (t.seller != SELLER) revert BadTerms(3);
-        if (t.buyer == address(0)) revert BadTerms(4);
-        if (t.slaFloorBps > BPS || t.killFeeBps > BPS) revert BadTerms(5);
+        address b = t.buyer;
+        // Refunds and change to any of these would be stranded in a contract with no exit.
+        if (b == address(0) || b == address(this) || b == VAULT_IMPL || b == USDC) revert BadTerms(4);
+        if (t.slaFloorBps > BPS || t.killFeeBps > MAX_KILL_FEE_BPS) revert BadTerms(5);
         if (t.dueAt != 0 && t.dueAt >= t.deadline) revert BadTerms(6);
         if (atRegistration && (t.deadline <= block.timestamp || t.deadline > block.timestamp + MAX_LIFETIME)) {
             revert BadTerms(7);
         }
         if (t.operator == address(0)) revert BadTerms(8);
+        if (t.reviewWindow > MAX_REVIEW_WINDOW) revert BadTerms(9);
+        // An already-blacklisted buyer could never be refunded; its order would sit in the keeper range for good.
+        if (atRegistration && _usdcFlag(abi.encodeCall(IFiatTokenV2_2.isBlacklisted, (b)))) revert BadTerms(4);
     }
 
     function _requireUnregistered(Record storage r) private view {
@@ -347,16 +389,14 @@ contract KeyframeEscrowFactory is IKeyframeEscrowFactory, EIP712, ReentrancyGuar
         address e = escrowOf(h);
         uint256 bal = IERC20(t.token).balanceOf(e);
         uint256 fee = Math.min(t.amount * t.killFeeBps / BPS, bal);
-        uint256 toBuyer = bal - fee;
         r.status = Status.Rejected;
         r.toSeller = fee;
-        r.toBuyer = toBuyer;
         r.finalAt = _now();
         emit Decided(h, false, fee);
 
         _ensureClone(e, h, bal);
         _push(e, t.token, t.seller, fee);
-        _push(e, t.token, t.buyer, toBuyer);
+        r.toBuyer = _tryPush(e, t.token, t.buyer, bal - fee);
     }
 
     /// @dev Effects of a buyer-only terminal transition (everything at E in T.token goes to T.buyer). Records the
@@ -388,16 +428,10 @@ contract KeyframeEscrowFactory is IKeyframeEscrowFactory, EIP712, ReentrancyGuar
         // Bounded by maxScan; one trusted-token read per entry.
         // forge-lint: disable-next-line(calls-loop)
         uint256 bal = IERC20(USDC).balanceOf(e);
-        if (bal != 0) {
-            _ensureClone(e, h, bal);
-            // Interaction before effects is deliberate: the push targets USDC (no hooks), every entry point is
-            // nonReentrant, and a failed push must leave the order untouched.
-            // forge-lint: disable-next-line(reentrancy-no-eth, calls-loop)
-            try KeyframeVault(e).push(USDC, r.buyer, bal) {}
-            catch {
-                return false;
-            }
-        }
+        _ensureClone(e, h, bal);
+        // Interaction before effects is deliberate: the push targets USDC (no hooks), every entry point is
+        // nonReentrant, and a failed push must leave the order untouched.
+        if (_tryPush(e, USDC, r.buyer, bal) != bal) return false;
         r.status = Status.Refunded;
         r.toBuyer = bal;
         r.finalAt = _now();
@@ -425,9 +459,30 @@ contract KeyframeEscrowFactory is IKeyframeEscrowFactory, EIP712, ReentrancyGuar
         return s >= Status.Released;
     }
 
-    function _window(uint256 maxScan) private view returns (uint256 start, uint256 end) {
-        start = scanFrom;
-        end = start + Math.min(maxScan, _registry.length - start);
+    /// @dev The keeper window shared by `refundExpired` and `refundableCount`: `n` entries from `start`, wrapping at
+    ///      `len` back to `from`.
+    function _window(uint256 maxScan) private view returns (uint256 from, uint256 start, uint256 n, uint256 len) {
+        Scan memory s = _scan;
+        len = _registry.length;
+        from = s.from;
+        n = Math.min(maxScan, len - from);
+        start = s.cursor;
+        if (start < from || start >= len) start = from;
+    }
+
+    /// @dev Whether a USDC transfer from E to the buyer can currently succeed, as far as Circle's blacklist goes.
+    function _payable(address buyer_, address e) private view returns (bool) {
+        return !_usdcFlag(abi.encodeCall(IFiatTokenV2_2.isBlacklisted, (buyer_)))
+            && !_usdcFlag(abi.encodeCall(IFiatTokenV2_2.isBlacklisted, (e)));
+    }
+
+    /// @dev Best-effort FiatTokenV2_2 flag query (isBlacklisted / paused). A failing or short answer reads as false,
+    ///      so a USDC without these views degrades to the plain transfer outcome instead of blocking registration or
+    ///      the keeper view. Pre-check only; transfers stay authoritative.
+    function _usdcFlag(bytes memory query) private view returns (bool) {
+        // forge-lint: disable-next-line(calls-loop)
+        (bool ok, bytes memory ret) = USDC.staticcall(query);
+        return ok && ret.length >= 32 && abi.decode(ret, (uint256)) != 0;
     }
 
     function _balanceOf(address token, address account) private view returns (uint256) {
@@ -441,5 +496,26 @@ contract KeyframeEscrowFactory is IKeyframeEscrowFactory, EIP712, ReentrancyGuar
 
     function _push(address e, address token, address to, uint256 amount) private {
         if (amount != 0) KeyframeVault(e).push(token, to, amount);
+    }
+
+    /// @dev Like `_push`, but a transfer the token refuses (USDC blacklist or pause) is swallowed: returns what was
+    ///      actually sent (`amount` or 0). Whatever is not sent stays at E, where only `sweep` (T.token once terminal)
+    ///      can move it, and only to T.buyer. An out-of-gas failure is not swallowed: otherwise a caller could starve
+    ///      the push (63/64 rule) and gas estimation could settle on a limit at which it silently fails.
+    function _tryPush(address e, address token, address to, uint256 amount) private returns (uint256) {
+        if (amount == 0) return 0;
+        uint256 gasBefore = gasleft();
+        // forge-lint: disable-next-line(calls-loop)
+        try KeyframeVault(e).push(token, to, amount) {
+            return amount;
+        } catch {
+            // Running out of gas anywhere in the push (clone -> vault -> USDC proxy -> implementation; each nested call
+            // keeps back 1/64) hands back about 1 - (63/64)^depth of gasBefore, under 1/8 for up to 8 levels. A
+            // token-level revert (blacklist, pause) costs a few thousand gas and hands back nearly all of it.
+            // Reverting inside the keeper loop is intended: a gas-starved batch must fail, not skip entries.
+            // forge-lint: disable-next-line(require-revert-in-loop)
+            if (gasleft() < gasBefore / 8) revert();
+            return 0;
+        }
     }
 }

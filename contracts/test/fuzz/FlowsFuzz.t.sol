@@ -71,7 +71,7 @@ contract FlowsFuzzTest is KeyframeBase {
 
     function testFuzz_studio_rejectSplit(uint256 amount, uint16 killFeeBps, uint256 extra, uint32 at) public {
         amount = bound(amount, factory.MIN_AMOUNT(), factory.MAX_AMOUNT());
-        killFeeBps = uint16(bound(killFeeBps, 0, 10_000));
+        killFeeBps = uint16(bound(killFeeBps, 0, factory.MAX_KILL_FEE_BPS()));
         extra = bound(extra, 0, 10_000_000);
         IF.Terms memory t = _studio(amount, 1 days, killFeeBps);
         _fundEscrow(t, amount + extra);
