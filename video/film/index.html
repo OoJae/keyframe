@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Keyframe — pay on delivery (demo film)</title>
+<style>
+@font-face { font-family: 'Instrument Sans'; src: url('assets/fonts/instrument-sans.woff2') format('woff2'); font-weight: 400 600; font-display: block; }
+@font-face { font-family: 'Fragment Mono'; src: url('assets/fonts/fragment-mono.woff2') format('woff2'); font-weight: 400; font-display: block; }
+:root { --bg:#0c0c0e; --panel:#141417; --panel2:#1c1c20; --line:#2a2a30; --text:#f2f1ed; --muted:#a3a2a9; --faint:#706f77; --gold:#e9c46a; --green:#74d6a4; --red:#ff7d70; --blue:#93b9ff; }
+html, body { margin:0; padding:0; background:var(--bg); }
+#root { position:relative; width:100%; height:100%; overflow:hidden; background:var(--bg); font-family:'Instrument Sans', sans-serif; color:var(--text); }
+.bgglow { position:absolute; inset:0; background: radial-gradient(1200px 700px at 70% 20%, rgba(233,196,106,0.07), transparent 60%), radial-gradient(900px 600px at 15% 90%, rgba(116,214,164,0.05), transparent 60%); }
+.scene { position:absolute; inset:0; opacity:0; }
+.mono { font-family:'Fragment Mono', monospace; }
+.mask { display:block; overflow:hidden; padding-bottom:0.08em; }
+.ln { display:block; }
+.gold { color:var(--gold); } .green { color:var(--green); } .muted { color:var(--muted); } .red { color:var(--red); }
+.label { font-family:'Fragment Mono', monospace; font-size:21px; letter-spacing:0.16em; color:var(--muted); }
+.chip { display:inline-flex; align-items:center; gap:12px; font-family:'Fragment Mono', monospace; font-size:20px; letter-spacing:0.16em; padding:10px 18px; border:1px solid #4d4124; border-radius:999px; color:var(--gold); }
+.chip i { width:9px; height:9px; border-radius:50%; background:currentColor; display:block; }
+.chip.g { color:var(--green); border-color:#25503a; }
+.caption { position:absolute; left:0; right:0; bottom:64px; text-align:center; font-size:38px; font-weight:500; line-height:1.25; letter-spacing:-0.005em; }
+.caption .c { position:absolute; left:160px; right:160px; bottom:0; opacity:0; }
+.phone { position:absolute; border-radius:46px; background:#050506; border:10px solid #1f1f24; box-shadow:0 30px 80px rgba(0,0,0,0.55), 0 0 0 1px #2c2c33; overflow:hidden; }
+.phone video { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+.browser { position:absolute; border-radius:18px; background:var(--panel); border:1px solid var(--line); box-shadow:0 30px 90px rgba(0,0,0,0.5); overflow:hidden; }
+.browser .bar { height:46px; display:flex; align-items:center; gap:9px; padding:0 18px; border-bottom:1px solid var(--line); background:#111114; }
+.browser .bar i { width:12px; height:12px; border-radius:50%; background:#2f2f36; display:block; }
+.browser .bar span { margin-left:16px; font-family:'Fragment Mono', monospace; font-size:16px; color:var(--faint); padding:6px 14px; border-radius:8px; background:#18181c; }
+.browser .view { position:absolute; left:0; right:0; top:47px; bottom:0; overflow:hidden; }
+.browser .view img { position:absolute; display:block; }
+.hl { position:absolute; border:3px solid var(--gold); border-radius:12px; box-shadow:0 0 0 9999px rgba(12,12,14,0); opacity:0; }
+.tag { position:absolute; font-family:'Fragment Mono', monospace; font-size:20px; color:#18150b; background:var(--gold); padding:6px 12px; border-radius:8px; opacity:0; white-space:nowrap; }
+.chapter { position:absolute; left:110px; top:64px; font-family:'Fragment Mono', monospace; font-size:22px; letter-spacing:0.2em; color:var(--gold); }
+.wordmark { display:flex; align-items:center; gap:26px; }
+.diamond { width:46px; height:46px; background:var(--gold); border-radius:6px; transform:rotate(45deg); }
+.checklist { list-style:none; margin:0; padding:0; }
+.checklist li { display:grid; grid-template-columns:44px 1fr; gap:14px; padding:18px 0; border-top:1px solid var(--line); opacity:0; }
+.checklist li:first-child { border-top:0; }
+.checklist .mk { font-family:'Fragment Mono', monospace; font-size:28px; color:var(--green); line-height:38px; }
+.checklist b { display:block; font-size:30px; font-weight:600; }
+.checklist span { display:block; font-size:22px; color:var(--muted); margin-top:4px; }
+.vgrid { display:grid; grid-template-columns:1fr 1fr; gap:10px 60px; }
+.vgrid div { font-family:'Fragment Mono', monospace; font-size:24px; color:var(--text); opacity:0; }
+.vgrid div::before { content:'\2713  '; color:var(--green); }
+.card { position:absolute; background:var(--panel); border:1px solid var(--line); border-radius:22px; padding:34px 36px; opacity:0; }
+.card h3 { margin:0; font-size:40px; font-weight:600; }
+.card .k { font-family:'Fragment Mono', monospace; font-size:19px; letter-spacing:0.14em; color:var(--green); margin-bottom:18px; }
+.card .p { font-size:30px; color:var(--gold); margin-top:16px; font-weight:600; }
+.card .d { font-size:23px; color:var(--muted); margin-top:12px; line-height:1.35; }
+.node { position:absolute; background:var(--panel); border:1px solid var(--line); border-radius:20px; padding:24px 30px; opacity:0; }
+.node b { display:block; font-size:34px; font-weight:600; }
+.node span { display:block; font-family:'Fragment Mono', monospace; font-size:19px; color:var(--muted); margin-top:8px; letter-spacing:0.04em; }
+</style>
+</head>
+<body>
+<div id="root" data-composition-id="main" data-start="0" data-width="1920" data-height="1080" data-duration="87">
+  <div class="bgglow"></div>
+
+  <!-- persistent mini wordmark (after the title) -->
+  <div id="mini" style="position:absolute; right:110px; top:58px; opacity:0;">
+    <div class="wordmark" style="gap:14px;"><div class="diamond" style="width:20px;height:20px;border-radius:3px;"></div><div style="font-size:30px;font-weight:600;">Keyframe</div></div>
+  </div>
+
+  <!-- S1 cold open 0–6.6 -->
+  <div class="scene" id="s1">
+    <div class="phone" id="s1-phone" style="left:300px; top:118px; width:470px; height:836px;">
+      <video id="v-open" class="clip" src="assets/media/countdown-paid.mp4" data-start="0.3" data-duration="6.3" data-media-start="0" data-track-index="1" muted playsinline></video>
+    </div>
+    <div style="position:absolute; left:880px; top:300px; width:900px;">
+      <div class="label" id="s1-label" style="opacity:0;">REAL ORDER · BASE MAINNET · 1.00 USDC</div>
+      <div style="height:30px"></div>
+      <span class="mask" data-layout-allow-overflow><span class="ln" id="s1-l1" style="font-size:78px; font-weight:600; line-height:1.05;">An AI agent just</span></span>
+      <span class="mask" data-layout-allow-overflow><span class="ln" id="s1-l2" style="font-size:78px; font-weight:600; line-height:1.05;">bought this video.</span></span>
+      <div style="height:34px"></div>
+      <span class="mask" data-layout-allow-overflow><span class="ln" id="s1-l3" style="font-size:46px; line-height:1.2;">The studio got paid</span></span>
+      <span class="mask" data-layout-allow-overflow><span class="ln gold" id="s1-l4" style="font-size:46px; line-height:1.2;">only when it was delivered.</span></span>
+    </div>
+  </div>
+
+  <!-- S2 title 6.6–11.2 -->
+  <div class="scene" id="s2">
+    <div style="position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;">
+      <div class="wordmark" id="s2-wm"><div class="diamond"></div><div style="font-size:128px; font-weight:600; letter-spacing:-0.02em;">Keyframe</div></div>
+      <div style="height:46px"></div>
+      <span class="mask" data-layout-allow-overflow><span class="ln" id="s2-l1" style="font-size:60px; text-align:center;">Hire a motion designer from chat.</span></span>
+      <span class="mask" data-layout-allow-overflow><span class="ln gold" id="s2-l2" style="font-size:60px; text-align:center;">Pay only on delivery.</span></span>
+      <div style="height:44px"></div>
+      <div class="label" id="s2-sub" style="opacity:0;">A PAYBOX PLUGIN · LIVE ON BASE MAINNET</div>
+    </div>
+  </div>
+
+  <!-- S3 problem 11.2–19.4 -->
+  <div class="scene" id="s3">
+    <div style="position:absolute; left:160px; top:230px; width:1600px;">
+      <span class="mask" data-layout-allow-overflow><span class="ln" id="s3-l1" style="font-size:84px; font-weight:600;">Agents can pay now.</span></span>
+      <div style="height:22px"></div>
+      <span class="mask" data-layout-allow-overflow><span class="ln muted" id="s3-l2" style="font-size:54px;">But paying a stranger up front is a leap of faith.</span></span>
+      <div style="height:46px"></div>
+      <div class="mono" id="s3-l3" style="font-size:31px; opacity:0; letter-spacing:0.02em;"><span class="red">✕</span> no refunds &nbsp;&nbsp;&nbsp; <span class="red">✕</span> no escrow &nbsp;&nbsp;&nbsp; <span class="red">✕</span> no proof of delivery</div>
+      <div style="height:64px"></div>
+      <span class="mask" data-layout-allow-overflow><span class="ln gold" id="s3-l4" style="font-size:62px; font-weight:600;">Keyframe turns the payment into a sealed envelope.</span></span>
+    </div>
+  </div>
+
+  <!-- S4 ask 19.4–31.4 -->
+  <div class="scene" id="s4">
+    <div class="chapter" id="s4-ch">01 — ASK</div>
+    <div class="browser" id="s4-br" style="left:110px; top:150px; width:1120px; height:620px;">
+      <div class="bar"><i></i><i></i><i></i><span>claude.ai · Opus 5.5 + PayBox</span></div>
+      <div class="view">
+        <img id="s4-img1" src="assets/captures/ask-top-z.png" style="left:-235px; top:-95px; width:1600px; height:1000px; opacity:1;" alt="">
+        <img id="s4-img2" src="assets/captures/ask-answer-z.png" style="left:-238px; top:-505px; width:1600px; height:1000px; opacity:0;" alt="">
+        <div class="hl" id="s4-hl1" style="left:58px; top:136px; width:1000px; height:76px;"></div>
+        <div class="hl" id="s4-hl2" style="left:58px; top:212px; width:1000px; height:112px;"></div>
+      </div>
+    </div>
+    <div class="phone" id="s4-phone" style="left:1336px; top:118px; width:420px; height:746px;">
+      <video id="v-preview" class="clip" src="assets/media/preview-wm.mp4" data-start="22.4" data-duration="8" data-media-start="0" data-track-index="2" muted playsinline></video>
+    </div>
+    <div class="label" id="s4-ph-label" style="position:absolute; left:1336px; top:886px; width:420px; text-align:center; opacity:0;">PREVIEW, BEFORE YOU PAY</div>
+    <div class="caption">
+      <div class="c" id="s4-c1">Ask in plain words, right in your chat.</div>
+      <div class="c" id="s4-c2">Keyframe renders the clip <span class="gold">before you pay</span>, and quotes an exact price.</div>
+      <div class="c" id="s4-c3">Your money will go to an escrow made for <span class="gold">this one order</span>.</div>
+    </div>
+  </div>
+
+  <!-- S5 one tap 31.4–41.4 -->
+  <div class="scene" id="s5">
+    <div class="chapter" id="s5-ch">02 — ONE TAP</div>
+    <div id="s5-card" style="position:absolute; left:399px; top:210px; width:1122px; height:441px; border-radius:26px; overflow:hidden; box-shadow:0 30px 90px rgba(0,0,0,0.55);">
+      <img src="assets/captures/paybox-card-2x.png" style="display:block; width:1122px; height:441px;" alt="">
+      <div id="s5-glow" style="position:absolute; left:30px; top:300px; width:1062px; height:112px; border-radius:22px; border:3px solid var(--green); opacity:0;"></div>
+    </div>
+    <div class="chip g" id="s5-chip" style="position:absolute; left:399px; top:150px; opacity:0;"><i></i>REAL PAYBOX CARD · FIRST MAINNET ORDER</div>
+    <div class="browser" id="s5-br" style="left:190px; top:610px; width:1540px; height:190px; opacity:0;">
+      <div class="bar"><i></i><i></i><i></i><span>basescan.org · funding transaction</span></div>
+      <div class="view">
+        <img src="assets/captures/basescan-funding.png" style="left:-30px; top:-494px; width:1600px; height:1000px;" alt="">
+        <div class="hl" id="s5-hl" style="left:396px; top:58px; width:900px; height:50px;"></div>
+      </div>
+    </div>
+    <div class="tag" id="s5-tag1" style="left:1286px; top:558px;">buyer → escrow · 1.00 USDC</div>
+    <div class="caption">
+      <div class="c" id="s5-c1">One passkey tap. Gasless. <span class="green">Payment sent.</span></div>
+      <div class="c" id="s5-c2">The USDC lands at an address computed from the deal. <span class="gold">Nobody owns it.</span></div>
+      <div class="c" id="s5-c3">It can only pay the studio <span class="gold">with your file's key</span>, or go back to you.</div>
+    </div>
+  </div>
+
+  <!-- S6 your file 41.4–56.4 -->
+  <div class="scene" id="s6">
+    <div class="chapter" id="s6-ch">03 — YOUR FILE</div>
+    <div class="browser" id="s6-br1" style="left:190px; top:170px; width:1540px; height:360px;">
+      <div class="bar"><i></i><i></i><i></i><span>basescan.org · release transaction · event log</span></div>
+      <div class="view">
+        <img src="assets/captures/basescan-release-logs.png" style="left:-60px; top:-440px; width:1600px; height:1000px;" alt="">
+        <div class="hl" id="s6-hl1" style="left:262px; top:126px; width:796px; height:36px;"></div>
+        <div class="hl" id="s6-hl2" style="left:262px; top:158px; width:796px; height:36px; border-color:var(--green);"></div>
+      </div>
+    </div>
+    <div class="tag" id="s6-tag1" style="left:1272px; top:316px;">the key to your file</div>
+    <div class="tag" id="s6-tag2" style="left:1272px; top:390px; background:var(--green);">your file's fingerprint</div>
+    <div id="s6-facts" style="position:absolute; left:190px; top:600px; display:flex; gap:22px; opacity:0;">
+      <div class="chip g"><i></i>RELEASED · BLOCK 52,722,510 · 46 S AFTER PAYMENT</div>
+      <div class="chip"><i></i>ESCROW → STUDIO · 1.00 USDC</div>
+    </div>
+
+    <div id="s6-watch" style="position:absolute; left:110px; top:140px; width:1000px; height:800px; opacity:0;">
+      <div class="browser" style="left:0; top:0; width:1000px; height:800px;">
+        <div class="bar"><i></i><i></i><i></i><span>keyframe…/w/o_YF8xCvJy3fusQUQzaJCMjG</span></div>
+        <div class="view">
+          <img src="assets/captures/watch-desktop.png" style="left:-300px; top:-6px; width:1600px; height:1000px;" alt="">
+          <div style="position:absolute; left:289px; top:238px; width:424px; height:754px; overflow:hidden; border-radius:14px; background:#000;">
+            <video id="v-watch" class="clip" src="assets/media/countdown-paid.mp4" data-start="47.0" data-duration="8" data-media-start="0" data-track-index="3" muted playsinline style="position:absolute; inset:0; width:100%; height:100%; object-fit:contain;"></video>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="s6-checks" style="position:absolute; left:1180px; top:190px; width:640px;">
+      <div class="label" id="s6-checks-l" style="opacity:0; margin-bottom:14px;">CHECKED IN YOUR BROWSER</div>
+      <ul class="checklist">
+        <li id="s6-k1"><div class="mk">✓</div><div><b>Key published on Base</b><span>read from 2 independent Base RPCs</span></div></li>
+        <li id="s6-k2"><div class="mk">✓</div><div><b>Sealed file matches Base</b><span>the exact file committed before payment</span></div></li>
+        <li id="s6-k3"><div class="mk">✓</div><div><b>Every piece intact</b><span>each encrypted chunk matches its fingerprint</span></div></li>
+        <li id="s6-k4"><div class="mk">✓</div><div><b>Same file, byte for byte</b><span>then it plays, and it's yours to download</span></div></li>
+      </ul>
+    </div>
+    <div class="caption">
+      <div class="c" id="s6-c1">The studio gets paid by <span class="gold">publishing the key</span> to your file, on Base.</div>
+      <div class="c" id="s6-c2">Your browser reads that key from Base, opens the file and checks every fingerprint.</div>
+    </div>
+  </div>
+
+  <!-- S7 proof 56.4–63.4 -->
+  <div class="scene" id="s7">
+    <div style="position:absolute; left:160px; top:150px; width:1600px;">
+      <span class="mask" data-layout-allow-overflow><span class="ln" id="s7-l1" style="font-size:64px; font-weight:600;">Then your agent checks it again, by itself.</span></span>
+      <div style="height:34px"></div>
+      <div style="display:flex; align-items:baseline; gap:30px;">
+        <div class="mono green" id="s7-count" style="font-size:150px; line-height:1; opacity:0;">0</div>
+        <div class="mono green" id="s7-of" style="font-size:150px; line-height:1; opacity:0;">/16</div>
+        <div class="label" id="s7-v" style="opacity:0; font-size:26px;">keyframe_verify · VERIFIED · KEY PUBLISHED · 3.1 s</div>
+      </div>
+      <div style="height:40px"></div>
+      <div class="vgrid" id="s7-grid">
+        <div>factory allowlisted</div><div>key published on Base</div>
+        <div>terms valid</div><div>keccak(key) matches the deal</div>
+        <div>file bound to the deal</div><div>file matches the deal</div>
+        <div>deal hash recomputed</div><div>manifest matches Base</div>
+        <div>escrow address recomputed</div><div>1 of 1 chunk decrypted</div>
+        <div>3 Base RPCs agree</div><div>file fingerprint matches</div>
+        <div>escrow is a Keyframe clone</div><div>MP4: 1080×1920, 8.0 s</div>
+        <div>deal registered on Base</div><div>matches the 9:16 brief</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- S8 safety net 63.4–71.4 -->
+  <div class="scene" id="s8">
+    <div style="position:absolute; left:160px; top:96px; width:1600px;">
+      <span class="mask" data-layout-allow-overflow><span class="ln" id="s8-l1" style="font-size:64px; font-weight:600;">Studio late? <span class="green">The money comes home by itself.</span></span></span>
+    </div>
+    <svg id="s8-svg" width="1920" height="1080" style="position:absolute; left:0; top:0;" viewBox="0 0 1920 1080">
+      <path id="s8-a1" d="M 520 560 L 760 560" stroke="#a3a2a9" stroke-width="4" fill="none" stroke-dasharray="240" stroke-dashoffset="240"/>
+      <path id="s8-a2" d="M 1160 520 C 1260 520 1260 380 1360 380" stroke="#e9c46a" stroke-width="4" fill="none" stroke-dasharray="320" stroke-dashoffset="320"/>
+      <path id="s8-a3" d="M 1160 600 C 1260 600 1260 740 1360 740" stroke="#74d6a4" stroke-width="4" fill="none" stroke-dasharray="320" stroke-dashoffset="320"/>
+    </svg>
+    <div class="node" id="s8-n0" style="left:170px; top:500px; width:290px;"><b>Your USDC</b><span>one tap, gasless</span></div>
+    <div class="node" id="s8-n1" style="left:780px; top:470px; width:320px; border-color:#4d4124;"><b class="gold">Escrow</b><span>no owner · no admin key</span><span>computed from the deal</span></div>
+    <div class="node" id="s8-n2" style="left:1380px; top:300px; width:400px;"><b>The studio</b><span>only by publishing your file's key</span><span>before the deadline</span></div>
+    <div class="node" id="s8-n3" style="left:1380px; top:660px; width:400px; border-color:#25503a;"><b class="green">Back to you</b><span>after the deadline, in full</span><span>keeper refunds automatically</span></div>
+    <div class="caption">
+      <div class="c" id="s8-c1">Anyone can trigger the refund. The keeper does it for you, with zero taps.</div>
+    </div>
+  </div>
+
+  <!-- S9 what it can do 71.4–79.4 -->
+  <div class="scene" id="s9">
+    <div style="position:absolute; left:160px; top:110px; width:1600px;">
+      <span class="mask" data-layout-allow-overflow><span class="ln" id="s9-l1" style="font-size:64px; font-weight:600;">What your agent can order today</span></span>
+    </div>
+    <div class="card" id="s9-c1" style="left:160px; top:290px; width:460px; height:360px;"><div class="k">INSTANT</div><h3>Countdown</h3><div class="p">1.00 USDC</div><div class="d">Rendered in about 15 seconds, previewed before you pay, delivered seconds after.</div></div>
+    <div class="card" id="s9-c2" style="left:730px; top:290px; width:460px; height:360px;"><div class="k">HAND-MADE</div><h3>Studio commission</h3><div class="p">from 25 USDC</div><div class="d">A human motion designer. Review window, one revision, accept or reject.</div></div>
+    <div class="card" id="s9-c3" style="left:1300px; top:290px; width:460px; height:360px;"><div class="k">OPEN</div><h3>Any x402 client</h3><div class="p">same escrow</div><div class="d">Not just PayBox: the API is documented in llms.txt and OpenAPI.</div></div>
+    <div class="label" id="s9-soon" style="position:absolute; left:160px; top:720px; opacity:0;">COMING NEXT · LAUNCH STINGS · PORTFOLIO CARDS · KINETIC POSTS</div>
+    <div class="caption">
+      <div class="c" id="s9-c">Pay on delivery, for anything an agent can buy.</div>
+    </div>
+  </div>
+
+  <!-- S10 end card 79.4–87 -->
+  <div class="scene" id="s10">
+    <div style="position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;">
+      <div class="wordmark" id="s10-wm"><div class="diamond"></div><div style="font-size:118px; font-weight:600; letter-spacing:-0.02em;">Keyframe</div></div>
+      <div style="height:34px"></div>
+      <span class="mask" data-layout-allow-overflow><span class="ln" id="s10-l1" style="font-size:50px; text-align:center;">Hire a motion designer from chat. <span class="gold">Pay only on delivery.</span></span></span>
+      <div style="height:56px"></div>
+      <div class="mono" id="s10-links" style="font-size:27px; text-align:center; line-height:1.75; opacity:0;">
+        keyframe-api.keyframe-spike-server.workers.dev<br>
+        github.com/OoJae/keyframe<br>
+        <span class="muted">factory 0xd9d5…e561 · Base mainnet · source verified</span>
+      </div>
+      <div style="height:48px"></div>
+      <div id="s10-fine" style="font-size:22px; color:var(--faint); text-align:center; line-height:1.5; opacity:0;">
+        Real USDC on Base mainnet. Buyer and studio wallets are both the builder's. Contracts unaudited; orders capped at 50 USDC.<br>
+        Built for MoonPay Hackathons · Chapter 1 · a PayBox plugin
+      </div>
+    </div>
+  </div>
+
+</div>
+  <script src="assets/vendor/gsap.min.js"></script>
+<script src="assets/vendor/CustomEase.min.js"></script>
+<script>
+  gsap.registerPlugin(CustomEase);
+  CustomEase.create("reveal", "M0,0 C0.16,1 0.3,1 1,1");
+  const tl = gsap.timeline({ paused: true });
+  const E = "reveal";
+
+  // scene windows: fade in / out on untimed wrappers
+  const scenes = [["#s1",0,6.6],["#s2",6.6,11.2],["#s3",11.2,19.4],["#s4",19.4,31.4],["#s5",31.4,41.4],["#s6",41.4,56.4],["#s7",56.4,63.4],["#s8",63.4,71.4],["#s9",71.4,79.4],["#s10",79.4,87]];
+  for (const [id, a, b] of scenes) {
+    tl.fromTo(id, { opacity: 0 }, { opacity: 1, duration: a === 0 ? 0.01 : 0.45, ease: "power1.out" }, a);
+    if (b < 87) tl.fromTo(id, { opacity: 1 }, { opacity: 0, duration: 0.4, ease: "power1.in", immediateRender: false }, b - 0.4);
+  }
+  tl.fromTo("#mini", { opacity: 0 }, { opacity: 1, duration: 0.5 }, 11.4);
+  tl.fromTo("#mini", { opacity: 1 }, { opacity: 0, duration: 0.4, immediateRender: false }, 79.0);
+
+  const up = (sel, t, d = 0.9) => tl.fromTo(sel, { yPercent: 105 }, { yPercent: 0, duration: d, ease: E }, t);
+  const fade = (sel, t, d = 0.6, y = 18) => tl.fromTo(sel, { opacity: 0, y }, { opacity: 1, y: 0, duration: d, ease: E }, t);
+  const out = (sel, t, d = 0.35) => tl.fromTo(sel, { opacity: 1 }, { opacity: 0, duration: d, ease: "power1.in", immediateRender: false }, t);
+  const cap = (sel, a, b) => { fade(sel, a, 0.5, 14); out(sel, b - 0.35); };
+  const hl = (sel, t) => tl.fromTo(sel, { opacity: 0, scale: 1.04 }, { opacity: 1, scale: 1, duration: 0.45, ease: E }, t);
+
+  // S1
+  tl.fromTo("#s1-phone", { y: 40, opacity: 0 }, { y: 0, opacity: 1, duration: 1.0, ease: E }, 0.15);
+  fade("#s1-label", 0.5);
+  up("#s1-l1", 0.8); up("#s1-l2", 0.95);
+  up("#s1-l3", 2.6); up("#s1-l4", 2.75);
+
+  // S2
+  tl.fromTo("#s2-wm", { opacity: 0, scale: 0.94 }, { opacity: 1, scale: 1, duration: 1.0, ease: E }, 6.8);
+  up("#s2-l1", 7.5); up("#s2-l2", 7.7);
+  fade("#s2-sub", 8.6);
+
+  // S3
+  up("#s3-l1", 11.5); up("#s3-l2", 12.9);
+  fade("#s3-l3", 14.6);
+  up("#s3-l4", 16.4);
+
+  // S4
+  fade("#s4-ch", 19.6);
+  tl.fromTo("#s4-br", { opacity: 0, x: -40 }, { opacity: 1, x: 0, duration: 0.9, ease: E }, 19.6);
+  tl.fromTo("#s4-img1", { scale: 1.0 }, { scale: 1.03, duration: 4, ease: "none" }, 19.6);
+  tl.fromTo("#s4-img1", { opacity: 1 }, { opacity: 0, duration: 0.5, immediateRender: false }, 23.3);
+  tl.fromTo("#s4-img2", { opacity: 0 }, { opacity: 1, duration: 0.5 }, 23.3);
+  tl.fromTo("#s4-phone", { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.9, ease: E }, 22.0);
+  fade("#s4-ph-label", 22.6);
+  hl("#s4-hl1", 25.0); hl("#s4-hl2", 27.4);
+  cap("#s4-c1", 19.9, 23.4); cap("#s4-c2", 23.6, 27.2); cap("#s4-c3", 27.4, 31.2);
+
+  // S5
+  fade("#s5-ch", 31.6);
+  tl.fromTo("#s5-card", { opacity: 0, scale: 0.96 }, { opacity: 1, scale: 1, duration: 0.9, ease: E }, 31.7);
+  fade("#s5-chip", 32.1);
+  tl.fromTo("#s5-glow", { opacity: 0 }, { opacity: 1, duration: 0.3 }, 33.0);
+  tl.fromTo("#s5-glow", { opacity: 1 }, { opacity: 0.35, duration: 0.8, immediateRender: false }, 33.4);
+  tl.fromTo("#s5-card", { y: 0, scale: 1 }, { y: -110, scale: 0.78, duration: 1.0, ease: E, immediateRender: false }, 35.3);
+  out("#s5-chip", 35.2);
+  tl.fromTo("#s5-br", { opacity: 0, y: 50 }, { opacity: 1, y: 0, duration: 0.9, ease: E }, 35.6);
+  hl("#s5-hl", 36.6); fade("#s5-tag1", 36.8, 0.5, 8);
+  cap("#s5-c1", 31.9, 35.4); cap("#s5-c2", 35.6, 38.4); cap("#s5-c3", 38.6, 41.2);
+
+  // S6
+  fade("#s6-ch", 41.6);
+  tl.fromTo("#s6-br1", { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.9, ease: E }, 41.6);
+  hl("#s6-hl1", 42.6); fade("#s6-tag1", 42.8, 0.5, 8);
+  hl("#s6-hl2", 43.6); fade("#s6-tag2", 43.8, 0.5, 8);
+  fade("#s6-facts", 44.4);
+    out("#s6-br1", 46.2, 0.4); out("#s6-tag1", 46.2, 0.4); out("#s6-tag2", 46.2, 0.4); out("#s6-facts", 46.2, 0.4);
+  tl.fromTo("#s6-watch", { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.9, ease: E }, 46.5);
+  fade("#s6-checks-l", 47.6);
+  ["#s6-k1", "#s6-k2", "#s6-k3", "#s6-k4"].forEach((k, i) => tl.fromTo(k, { opacity: 0, x: 24 }, { opacity: 1, x: 0, duration: 0.55, ease: E }, 48.2 + i * 1.3));
+  cap("#s6-c1", 41.9, 46.2); cap("#s6-c2", 46.7, 56.2);
+
+  // S7
+  up("#s7-l1", 56.7);
+  fade("#s7-count", 57.4, 0.4, 0); fade("#s7-of", 57.4, 0.4, 0);
+  tl.fromTo("#s7-count", { innerText: 0 }, { innerText: 16, snap: { innerText: 1 }, duration: 2.4, ease: "power1.inOut" }, 57.5);
+  gsap.utils.toArray("#s7-grid div").forEach((d, i) => tl.fromTo(d, { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.35, ease: E }, 57.6 + i * 0.15));
+  fade("#s7-v", 60.2);
+
+  // S8
+  up("#s8-l1", 63.7);
+  fade("#s8-n0", 64.3); tl.fromTo("#s8-a1", { strokeDashoffset: 240 }, { strokeDashoffset: 0, duration: 0.6, ease: "power2.out" }, 64.8);
+  fade("#s8-n1", 65.2);
+  tl.fromTo("#s8-a2", { strokeDashoffset: 320 }, { strokeDashoffset: 0, duration: 0.7, ease: "power2.out" }, 66.2); fade("#s8-n2", 66.6);
+  tl.fromTo("#s8-a3", { strokeDashoffset: 320 }, { strokeDashoffset: 0, duration: 0.7, ease: "power2.out" }, 67.6); fade("#s8-n3", 68.0);
+  cap("#s8-c1", 68.6, 71.2);
+
+  // S9
+  up("#s9-l1", 71.7);
+  ["#s9-c1", "#s9-c2", "#s9-c3"].forEach((c, i) => tl.fromTo(c, { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.8, ease: E }, 72.4 + i * 0.6));
+  fade("#s9-soon", 74.9);
+  cap("#s9-c", 75.6, 79.2);
+
+  // S10
+  tl.fromTo("#s10-wm", { opacity: 0, scale: 0.94 }, { opacity: 1, scale: 1, duration: 1.0, ease: E }, 79.6);
+  up("#s10-l1", 80.3);
+  fade("#s10-links", 81.3);
+  fade("#s10-fine", 82.4);
+
+  window.__timelines = window.__timelines || {};
+  window.__timelines["main"] = tl;
+</script>
+</body>
+</html>
