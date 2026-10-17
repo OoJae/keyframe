@@ -1,6 +1,7 @@
 import type { ChainReader } from "./chain.js";
 import type { Config } from "./config.js";
 import type { Repo } from "./db/repo.js";
+import type { EdgeRateLimiter } from "./ratelimit.js";
 import type { RelayerClient } from "./relayer/types.js";
 import type { Sanctions } from "./sanctions.js";
 import type { StorageAdapter } from "./storage.js";
@@ -27,6 +28,8 @@ export interface Services {
   x402: X402Runtime;
   nowMs: () => number;
   log: Logger;
+  /** Cloudflare Rate Limiting binding (optional): a per-client cap on every /v1 request at the edge. */
+  edgeLimiter?: EdgeRateLimiter;
 }
 
 export const nowS = (s: Pick<Services, "nowMs">): number => Math.floor(s.nowMs() / 1000);

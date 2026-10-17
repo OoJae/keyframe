@@ -40,6 +40,15 @@ class_name = "Relayer"
 tag = "v1"
 new_sqlite_classes = ["Relayer"]
 
+# Optional edge rate limiting (Workers Rate Limiting binding): when bound, every /v1 request is capped per client
+# (hashed CF-Connecting-IP) before any D1 work. The API's own D1 token buckets (src/ratelimit.ts) still guard the
+# costly endpoints (quotes, /rail, paid requests, SIWE, reviews) with or without it. namespace_id is any integer
+# unique to this account.
+# [[ratelimits]]
+# name = "RATE_LIMITER"
+# namespace_id = "1001"
+# simple = { limit = 120, period = 60 }
+
 [vars]
 # Canonical origin used in every 402 resource URL (https, no path). Must be the public hostname of this Worker.
 PUBLIC_BASE_URL = "https://api.keyframe.example"
@@ -72,4 +81,13 @@ OFAC_REFRESH_S = "21600"
 # snapshot provider, which is not built yet.
 FORMATS_DISABLED = "chart_moment"
 QUOTES_PER_BUYER_PER_HOUR = "30"
+# Instant renders queued or running: in total, and per client (hashed IP). The worker claims round-robin by client.
+MAX_QUEUED_RENDERS = "50"
+MAX_QUEUED_RENDERS_PER_CLIENT = "3"
+# Relayer DO: non-fund transactions per clock hour (fundWithAuthorization is never refused), and the ETH balance
+# (wei) below which every broadcast logs relayer_low_balance at error level.
+RELAYER_TX_PER_HOUR = "120"
+RELAYER_LOW_BALANCE_WEI = "500000000000000"
+# "off" disables the D1 token buckets (load tests only).
+RATE_LIMITS = "on"
 MAINTENANCE = "0"

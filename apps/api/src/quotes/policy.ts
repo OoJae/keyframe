@@ -30,6 +30,74 @@ const BUILTIN_DENYLIST = [
 ];
 
 const URL_IN_TEXT = /\bhttps?:\/\/|\bwww\.|\b[a-z0-9-]+\.(?:com|io|xyz|app|net|org|gg|me)\/\S/i;
+/** Any host-like token (label.tld, also bare "drainer.com", "x.co/claim", "@a.b", "xn--…"): no links in renders. */
+const DOMAIN_IN_TEXT =
+  /(?:^|[^\p{L}\p{N}-])(?:[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,61}[\p{L}\p{N}])?\.)+(?:\p{L}{2,24}|xn--[a-z0-9-]{1,59})(?=$|[^\p{L}\p{N}-])/iu;
+
+// Lookalikes folded to Latin before the denylist runs (Cyrillic / Greek letters that render like a-z).
+const CONFUSABLES: Record<string, string> = {
+  а: "a",
+  в: "b",
+  е: "e",
+  ё: "e",
+  к: "k",
+  м: "m",
+  н: "h",
+  о: "o",
+  р: "p",
+  с: "c",
+  т: "t",
+  у: "y",
+  х: "x",
+  ѕ: "s",
+  і: "i",
+  ї: "i",
+  ј: "j",
+  ԁ: "d",
+  ӏ: "l",
+  һ: "h",
+  ԛ: "q",
+  ԝ: "w",
+  ү: "y",
+  ɡ: "g",
+  α: "a",
+  β: "b",
+  ε: "e",
+  η: "n",
+  ι: "i",
+  κ: "k",
+  ν: "v",
+  ο: "o",
+  ρ: "p",
+  τ: "t",
+  υ: "u",
+  χ: "x",
+  ω: "w",
+};
+/** Leetspeak, applied only inside tokens that also contain a letter ("n4z1", "p0rn"), never to plain numbers. */
+const LEET: Record<string, string> = { "0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "@": "a", $: "s" };
+/** Default-ignorable / format characters that render as nothing (stripped, then the text is re-checked). */
+const INVISIBLE = /\p{Default_Ignorable_Code_Point}/gu;
+
+/** NFKC (fullwidth → ASCII, ligatures), invisible characters and accents removed, lowercased, lookalikes folded. */
+export function foldText(raw: string): string {
+  const base = raw.normalize("NFKC").replace(INVISIBLE, "").toLowerCase();
+  let out = "";
+  for (const ch of base.normalize("NFD").replace(/\p{M}+/gu, "")) out += CONFUSABLES[ch] ?? ch;
+  return out.replace(/[\p{L}\p{N}@$]+/gu, (tok) =>
+    /\p{L}/u.test(tok) ? Array.from(tok, (c) => LEET[c] ?? c).join("") : tok,
+  );
+}
+
+/**
+ * Collapses letters spelled out with separators ("n.a.z.i", "n a z i", "n-a-z-i") into one word, so a
+ * word-boundary denylist sees "nazi". Only runs of 3+ single characters are joined; ordinary words are untouched.
+ */
+export function collapseSpelled(folded: string): string {
+  return folded.replace(/(?<![\p{L}\p{N}])\p{L}(?:[\s.\-_*·•|/\\,'"`~+:;]+\p{L}(?![\p{L}\p{N}])){2,}/gu, (m) =>
+    m.replace(/[^\p{L}]/gu, ""),
+  );
+}
 /** C0/C1 controls (rendered text never needs them), zero-width characters and bidi overrides used for spoofing. */
 function hasForbiddenChar(s: string): boolean {
   for (const ch of s) {
@@ -78,6 +146,20 @@ export function contrastRatio(a: string, b: string): number {
 }
 
 /** Text fields that end up rendered (or read by a human designer), with their request paths. */
+/** Every string leaf (and key) of a JSON value, with its path; bounded so a hostile value cannot blow up. */
+function jsonStrings(path: string, v: unknown, out: [string, string][], depth = 0): void {
+  if (out.length > 2_000 || depth > 16) return;
+  if (typeof v === "string") out.push([path, v]);
+  else if (Array.isArray(v)) {
+    for (const [i, x] of v.entries()) jsonStrings(`${path}.${i}`, x, out, depth + 1);
+  } else if (v && typeof v === "object") {
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+      out.push([`${path}.${k}`, k]);
+      jsonStrings(`${path}.${k}`, x, out, depth + 1);
+    }
+  }
+}
+
 function textFields(r: QuoteRequest): [string, string][] {
   const out: [string, string][] = [];
   const add = (path: string, v: string | undefined) => {
@@ -100,6 +182,7 @@ function textFields(r: QuoteRequest): [string, string][] {
       r.params.holdings?.forEach((h, i) => {
         add(`params.holdings.${i}.symbol`, h.symbol);
       });
+      if (r.params.portfolio !== undefined) jsonStrings("params.portfolio", r.params.portfolio, out);
       break;
     case "kinetic_post":
       add("params.text", r.params.text);
@@ -116,7 +199,7 @@ function textFields(r: QuoteRequest): [string, string][] {
       add("params.brief", r.params.brief);
       break;
     case "catalog":
-      for (const [k, v] of Object.entries(r.params.values)) if (typeof v === "string") add(`params.values.${k}`, v);
+      jsonStrings("params.values", r.params.values, out);
       break;
   }
   return out;
@@ -138,9 +221,15 @@ export function checkPolicy(r: QuoteRequest, nowS: number, extraDenylist: readon
   const deny = denyRegex(extraDenylist);
   for (const [field, value] of textFields(r)) {
     if (hasForbiddenChar(value)) return { ok: false, reason: "forbidden_characters", field };
-    if (deny.test(value)) return { ok: false, reason: "disallowed_content", field };
+    const folded = foldText(value);
+    if (deny.test(value) || deny.test(folded) || deny.test(collapseSpelled(folded))) {
+      return { ok: false, reason: "disallowed_content", field };
+    }
     // Studio briefs may cite links in `references`; nowhere else may text carry a URL into a render.
-    if (URL_IN_TEXT.test(value)) return { ok: false, reason: "links_not_allowed_in_text", field };
+    const plain = value.normalize("NFKC").replace(INVISIBLE, "");
+    if (URL_IN_TEXT.test(plain) || DOMAIN_IN_TEXT.test(plain)) {
+      return { ok: false, reason: "links_not_allowed_in_text", field };
+    }
   }
   for (const [field, value] of urlFields(r)) {
     if (!safeHttpsUrl(value)) return { ok: false, reason: "unsafe_url", field };

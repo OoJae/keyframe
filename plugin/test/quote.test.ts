@@ -17,7 +17,10 @@ describe("keyframe_quote", () => {
     expect(q.escrow.address).toBe(rec.escrow);
     expect(q.terms_hash).toBe(rec.termsHash);
     expect(q.route.kind).toBe("x402");
-    expect(q.next).toMatchObject({ tool: "keyframe_commission", input: { quote_id: q.quote_id } });
+    expect(q.next).toMatchObject({
+      tool: "keyframe_commission",
+      input: { quote_id: q.quote_id, buyer: BUYER.address, terms_hash: rec.termsHash },
+    });
     expect(q.checks.filter((c: Json) => c.status === "fail")).toEqual([]);
     for (const id of [
       "escrow_address",
@@ -36,7 +39,7 @@ describe("keyframe_quote", () => {
       expect(q.checks.find((c: Json) => c.id === id)?.status, id).toBe("pass");
     }
     // Quote card template (§A5)
-    expect(r.text).toContain(`Keyframe quote ${q.quote_id}: Launch Sting · instrument style · 9:16 · 6 s`);
+    expect(r.text).toContain(`Keyframe quote ${q.quote_id}: Launch Sting · "instrument" style · 9:16 · 6 s`);
     expect(r.text).toContain("Price 4.00 USDC on Base");
     expect(r.text).toContain(
       `Sealed envelope: ${rec.escrow.slice(0, 6)}…${rec.escrow.slice(-4)} (full: ${rec.escrow}). Nothing is deployed there yet.`,
@@ -45,7 +48,9 @@ describe("keyframe_quote", () => {
       "Checks by this plugin: address recomputed ✓ · live payment request pays exactly 4.00 USDC to it ✓ · preview matches the deal ✓",
     );
     expect(r.text).toContain("route: x402 (one approval, no gas)");
-    expect(r.text).toContain(`Next: keyframe_commission {quote_id:"${q.quote_id}"}`);
+    expect(r.text).toContain(
+      `Next: keyframe_commission {quote_id:"${q.quote_id}", buyer:"${BUYER.address}", terms_hash:"${q.terms_hash}"}`,
+    );
     expect(r.text).not.toMatch(/PayBox-verified|audited|AI video generator/i);
   });
 

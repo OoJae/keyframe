@@ -87,6 +87,7 @@ describe("dist/plugin.mjs over MCP stdio", () => {
   });
 
   let quoteId: string;
+  let payInput: Record<string, unknown>;
   it("keyframe_quote: checked quote card, x402 route", async () => {
     const r = await callTool("keyframe_quote", {
       buyer: BUYER.address,
@@ -96,6 +97,8 @@ describe("dist/plugin.mjs over MCP stdio", () => {
     });
     expect(r.isError).toBeUndefined();
     quoteId = r.structuredContent.quote_id;
+    payInput = r.structuredContent.next.input;
+    expect(payInput).toEqual({ quote_id: quoteId, buyer: BUYER.address, terms_hash: r.structuredContent.terms_hash });
     expect(r.structuredContent).toMatchObject({
       payable: true,
       route: { kind: "x402" },
@@ -107,7 +110,7 @@ describe("dist/plugin.mjs over MCP stdio", () => {
   });
 
   it("keyframe_commission: one strict x402 proposal", async () => {
-    const r = await callTool("keyframe_commission", { quote_id: quoteId });
+    const r = await callTool("keyframe_commission", payInput);
     expect(Object.keys(r.structuredContent)).toEqual([PROPOSAL]);
     expect(r.structuredContent[PROPOSAL]).toMatchObject({
       kind: "x402",
@@ -117,7 +120,7 @@ describe("dist/plugin.mjs over MCP stdio", () => {
   });
 
   it("keyframe_commission_direct: one strict evm proposal", async () => {
-    const r = await callTool("keyframe_commission_direct", { quote_id: quoteId });
+    const r = await callTool("keyframe_commission_direct", payInput);
     expect(r.structuredContent[PROPOSAL]).toMatchObject({
       kind: "evm",
       chain: "eip155:8453",
@@ -133,7 +136,11 @@ describe("dist/plugin.mjs over MCP stdio", () => {
       params: { style: "a", wordmark: "W" },
     });
     rec.payTo = "0x000000000000000000000000000000000000dEaD";
-    const r = await callTool("keyframe_commission", { quote_id: rec.quote.quote_id });
+    const r = await callTool("keyframe_commission", {
+      quote_id: rec.quote.quote_id,
+      buyer: BUYER.address,
+      terms_hash: rec.termsHash,
+    });
     expect(r.isError).toBe(true);
     expect(r.structuredContent).toBeUndefined();
     expect(r.text).toMatch(/Nothing was proposed/);
@@ -233,7 +240,11 @@ describe("dist/plugin.mjs over MCP stdio", () => {
         "KEYFRAME_FILES_BASE",
       ].map((k) => [k, ""]),
     );
-    const r = await callTool("keyframe_commission", { quote_id: "q_1111111111111111111111" }, empty);
+    const r = await callTool(
+      "keyframe_commission",
+      { quote_id: "q_1111111111111111111111", buyer: BUYER.address, terms_hash: `0x${"11".repeat(32)}` },
+      empty,
+    );
     expect(r.isError).toBe(true);
     expect(r.structuredContent).toBeUndefined();
   });

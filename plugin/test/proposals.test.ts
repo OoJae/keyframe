@@ -4,6 +4,7 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { decodeFunctionData, encodeFunctionData } from "viem";
 import { describe, expect, it } from "vitest";
+import { chunkAddr } from "../src/core/text.js";
 import { evmOutputSchema, x402OutputSchema } from "../src/paybox.js";
 import { erc20Abi, keyframeFactoryAbi, USDC } from "../src/protocol/index.js";
 import { commissionDirectTool, commissionTool } from "../src/tools/commission.js";
@@ -24,12 +25,18 @@ async function freshQuote(world: ReturnType<typeof setup>) {
   return world.createQuote(quoteTool.inputSchema.parse(stingInput(BUYER.address)) as Record<string, unknown>);
 }
 
+const pay = (rec: { quote: Record<string, unknown>; termsHash: string }) => ({
+  quote_id: rec.quote.quote_id,
+  buyer: BUYER.address,
+  terms_hash: rec.termsHash,
+});
+
 describe("keyframe_commission (x402)", () => {
   it("returns only the starter x402 proposal: POST to the order URL, maxAmount = T.amount, <= 240 s", async () => {
     const world = setup();
     const rec = await freshQuote(world);
     const before = Math.floor(Date.now() / 1000);
-    const r = await call(commissionTool, { quote_id: rec.quote.quote_id });
+    const r = await call(commissionTool, pay(rec));
     expect(r.isError).toBeUndefined();
     expect(Object.keys(r.structuredContent ?? {})).toEqual([PROPOSAL]);
     x402OutputSchema.parse(r.structuredContent);
@@ -48,7 +55,7 @@ describe("keyframe_commission (x402)", () => {
     expect(exp).toBeGreaterThan(before);
     expect(exp).toBeLessThanOrEqual(before + 240 + 1);
     expect(exp).toBeLessThanOrEqual((rec.quote.quote_expires_at as number) - 60);
-    expect(r.text).toContain(`must show payee ${rec.escrow}`);
+    expect(r.text).toContain(`must show payee ${chunkAddr(rec.escrow)}`);
     expect(r.text).toContain("never call keyframe_commission twice");
     expect(r.text).not.toMatch(/PayBox-verified/i);
   });
@@ -57,7 +64,7 @@ describe("keyframe_commission (x402)", () => {
     const world = setup();
     const rec = await freshQuote(world);
     rec.quote.quote_expires_at = Math.floor(Date.now() / 1000) + 150;
-    const r = await call(commissionTool, { quote_id: rec.quote.quote_id });
+    const r = await call(commissionTool, pay(rec));
     const p = (r.structuredContent as Record<string, Json>)[PROPOSAL];
     expect(Date.parse(p.expiresAt) / 1000).toBe((rec.quote.quote_expires_at as number) - 60);
   });
@@ -66,7 +73,7 @@ describe("keyframe_commission (x402)", () => {
     const world = setup();
     world.wire = "v1";
     const rec = await freshQuote(world);
-    const r = await call(commissionTool, { quote_id: rec.quote.quote_id });
+    const r = await call(commissionTool, pay(rec));
     expect(r.isError).toBeUndefined();
     expect(r.text).toContain("x402 v1");
   });
@@ -76,7 +83,7 @@ describe("keyframe_commission_direct (evm)", () => {
   it("returns only the starter evm proposal: USDC.transfer(E, amount), value 0", async () => {
     const world = setup();
     const rec = await freshQuote(world);
-    const r = await call(commissionDirectTool, { quote_id: rec.quote.quote_id });
+    const r = await call(commissionDirectTool, pay(rec));
     expect(r.isError).toBeUndefined();
     expect(Object.keys(r.structuredContent ?? {})).toEqual([PROPOSAL]);
     expect(validEvm(r.structuredContent)).toBe(true);
@@ -93,7 +100,7 @@ describe("keyframe_commission_direct (evm)", () => {
     const world = setup();
     world.setWallet(BUYER.address, { eth: 0n });
     const rec = await freshQuote(world);
-    const r = await call(commissionDirectTool, { quote_id: rec.quote.quote_id });
+    const r = await call(commissionDirectTool, pay(rec));
     expect(r.isError).toBeUndefined();
     expect(r.text).toMatch(/WARNING: the buyer wallet has only 0 ETH/);
   });

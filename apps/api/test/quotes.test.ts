@@ -274,7 +274,10 @@ describe("render-before-pay: draft → final", () => {
 
   it("the hidden 0.10 USDC probe SKU (format catalog) goes draft → final → 402", async () => {
     const h = new Harness();
-    const q = await h.createQuote({ format: "catalog", params: { catalog_id: "probe", values: { probe_id: "synthetic-1" } } });
+    const q = await h.createQuote({
+      format: "catalog",
+      params: { catalog_id: "probe", values: { probe_id: "synthetic-1" } },
+    });
     expect(q).toMatchObject({ format: "catalog", catalog_id: "probe", price: { atomic: "100000", usdc: "0.10" } });
     expect(q.spec.params).toMatchObject({ catalog_id: "probe", values: { probe_id: "synthetic-1" } });
     const { done } = await h.render({ mp4: fixture("probe-2s-9x16.m4v") });

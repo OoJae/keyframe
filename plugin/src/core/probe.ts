@@ -12,15 +12,19 @@ import {
   sha256Hex,
   USDC,
 } from "../protocol/index.js";
-import { apiRequest, backendMessage } from "./api.js";
+import { apiRequest, backendMessage, rateLimitedText } from "./api.js";
 import { type Check, fail, pass } from "./checks.js";
 import type { Config } from "./config.js";
 import type { Budget } from "./net.js";
 import { ToolError } from "./result.js";
-import { clean, shortAddr, usdc } from "./text.js";
+import { quoted, shortAddr, usdc } from "./text.js";
 
 export type ProbeOk = { ok: true; check: Check; version: 1 | 2; accept: NormalizedAccept; sha256: Hex; url: string };
-export type ProbeFail = { ok: false; check: Check; reason: "paid" | "expired" | "unavailable" | "invalid" | "network" };
+export type ProbeFail = {
+  ok: false;
+  check: Check;
+  reason: "paid" | "settling" | "expired" | "unavailable" | "invalid" | "network";
+};
 export type Probe = ProbeOk | ProbeFail;
 
 const PROBE_CAP_MS = 3_000;
@@ -49,6 +53,19 @@ export async function probe402(
     throw error;
   }
   const said = backendMessage(res.json);
+  if ((res.json as { charged?: unknown } | null)?.charged === "unknown") {
+    return {
+      ok: false,
+      reason: "settling",
+      check: fail(
+        id,
+        `a payment for this quote is being settled right now and its outcome is not known yet (HTTP ${res.status}, charged "unknown"): do not pay again; poll keyframe_status`,
+      ),
+    };
+  }
+  if (res.status === 429) {
+    return { ok: false, reason: "unavailable", check: fail(id, `${rateLimitedText(res)}.`) };
+  }
   if (res.status === 409 || res.status === 200) {
     return {
       ok: false,
@@ -58,7 +75,7 @@ export async function probe402(
   }
   if (res.status === 410)
     return { ok: false, reason: "expired", check: fail(id, `the quote has expired (HTTP 410).${said}`) };
-  if (res.status === 451 || res.status === 503 || res.status === 429) {
+  if (res.status === 451 || res.status === 503) {
     return {
       ok: false,
       reason: "unavailable",
@@ -80,7 +97,7 @@ export async function probe402(
       reason: "invalid",
       check: fail(
         id,
-        `the order URL did not return one well-formed x402 payment request (${clean(code, 40) || "unparseable"}).`,
+        `the order URL did not return one well-formed x402 payment request (${typeof code === "string" && /^[a-z_]{1,40}$/.test(code) ? code : "unparseable"}).`,
       ),
     };
   }
@@ -94,19 +111,26 @@ export async function probe402(
       isAddressEqual(a.asset as Address, USDC),
   );
   const problems: string[] = [];
-  if (base.length !== 1) {
-    const seen = all
-      .map((a) => `${clean(a.scheme, 20)}/${clean(a.network, 40)}/${shortAddr(clean(a.asset, 64))}`)
+  const seen = () =>
+    all
+      .slice(0, 4)
+      .map((a) => `${quoted(a.scheme, 20)}/${quoted(a.network, 40)}/${quoted(shortAddr(a.asset), 64)}`)
       .join(", ");
-    problems.push(`expected exactly one exact / Base / USDC requirement, found ${base.length} (${seen})`);
+  // Exactly ONE requirement in total, not one matching among several: PayBox (not this plugin) picks what to sign.
+  if (all.length !== 1) {
+    problems.push(`expected exactly one payment requirement, found ${all.length} (${seen()})`);
+  } else if (base.length !== 1) {
+    problems.push(`expected exactly one exact / Base / USDC requirement, found ${base.length} (${seen()})`);
   }
-  const accept = base[0];
+  const accept = all.length === 1 ? base[0] : undefined;
   if (accept) {
-    if (!/^0x[0-9a-fA-F]{40}$/.test(accept.payTo) || !isAddressEqual(accept.payTo as Address, expect.escrow)) {
-      problems.push(`it pays ${clean(accept.payTo, 64)}, not the escrow ${expect.escrow}`);
+    const isAddr = /^0x[0-9a-fA-F]{40}$/.test(accept.payTo);
+    if (!isAddr || !isAddressEqual(accept.payTo as Address, expect.escrow)) {
+      problems.push(`it pays ${isAddr ? accept.payTo : quoted(accept.payTo, 64)}, not the escrow ${expect.escrow}`);
     }
+    // amount is schema-checked as an atomic decimal string (protocol x402.ts), so it is printed as is.
     if (accept.amount !== expect.amount.toString()) {
-      problems.push(`it asks ${clean(accept.amount, 80)} atomic USDC, not the deal's ${expect.amount}`);
+      problems.push(`it asks ${accept.amount.slice(0, 80)} atomic USDC, not the deal's ${expect.amount}`);
     }
   }
   if (problems.length > 0 || !accept) {
@@ -116,7 +140,7 @@ export async function probe402(
   const wire = pr.version === 2 ? (res.headers.get("payment-required") ?? "") : new TextDecoder().decode(res.bytes);
   const sha256 = await sha256Hex(wire.trim());
   const resourceNote =
-    pr.resource && pr.resource.url !== url ? ` Note: it names resource ${clean(pr.resource.url, 200)}.` : "";
+    pr.resource && pr.resource.url !== url ? ` Note: it names resource ${quoted(pr.resource.url, 200)}.` : "";
   return {
     ok: true,
     version: pr.version,

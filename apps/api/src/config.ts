@@ -32,6 +32,11 @@ export interface RawEnv {
   FORMATS_DISABLED?: string;
   POLICY_DENYLIST?: string;
   QUOTES_PER_BUYER_PER_HOUR?: string;
+  MAX_QUEUED_RENDERS?: string;
+  MAX_QUEUED_RENDERS_PER_CLIENT?: string;
+  RATE_LIMITS?: string;
+  RELAYER_TX_PER_HOUR?: string;
+  RELAYER_LOW_BALANCE_WEI?: string;
   MAINTENANCE?: string;
   KMASTER?: string;
   RELAYER_PRIVATE_KEY?: string;
@@ -67,6 +72,14 @@ export interface Config {
   formatsDisabled: ReadonlySet<string>;
   policyDenylist: readonly string[];
   quotesPerBuyerPerHour: number;
+  /** Instant renders queued or running, overall and per client (hashed IP, else buyer). */
+  maxQueuedRenders: number;
+  maxQueuedRendersPerClient: number;
+  /** Per-client token buckets on costly public endpoints ("off" disables; for load tests only). */
+  rateLimits: boolean;
+  /** Relayer DO: non-fund broadcasts per hour, and the ETH balance (wei) below which it alarms. */
+  relayerTxPerHour: number;
+  relayerLowBalanceWei: bigint;
   maintenance: boolean;
   secrets: Secrets;
   /** Human-readable problems that make money paths unavailable (quotes/settlement return 503). */
@@ -83,6 +96,11 @@ export interface Secrets {
 export const DEFAULT_OFAC_LIST_URL =
   "https://raw.githubusercontent.com/0xB10C/ofac-sanctioned-digital-currency-addresses/lists/sanctioned_addresses_ETH.json";
 export const DEFAULT_FACILITATOR_FALLBACK_URL = "https://facilitator.payai.network";
+/** Contract bounds (KeyframeEscrowFactory MAX_REVIEW_WINDOW, kill fee cap); quotes outside them are refused. */
+export const MAX_REVIEW_WINDOW_S = 14 * 86_400;
+export const MAX_KILL_FEE_BPS = 5_000;
+/** MIN_RELEASE_MARGIN_S must leave room for the release safety margin (120 s) plus the payout margin (60 s). */
+export const MIN_RELEASE_MARGIN_FLOOR_S = 180;
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
 const HEX32_PLUS = /^(0x)?([0-9a-fA-F]{2}){32,}$/;
@@ -167,6 +185,10 @@ export function parseConfig(env: RawEnv): Config {
   const workerToken = env.WORKER_TOKEN && env.WORKER_TOKEN.length >= 32 ? env.WORKER_TOKEN : null;
   if (!workerToken) problems.push("WORKER_TOKEN missing or shorter than 32 chars");
 
+  if (env.STUDIO_KILL_FEE_BPS && Number(env.STUDIO_KILL_FEE_BPS) > MAX_KILL_FEE_BPS) {
+    problems.push(`STUDIO_KILL_FEE_BPS above ${MAX_KILL_FEE_BPS} (the factory refuses such terms)`);
+  }
+
   let maxAmount = MAX_AMOUNT;
   if (env.MAX_AMOUNT && /^[1-9][0-9]{0,8}$/.test(env.MAX_AMOUNT)) {
     const m = BigInt(env.MAX_AMOUNT);
@@ -189,9 +211,9 @@ export function parseConfig(env: RawEnv): Config {
     maxAmount,
     quoteTtlS: int(env.QUOTE_TTL_S, 600, 120, 3600),
     draftTtlS: int(env.DRAFT_TTL_S, 900, 60, 7200),
-    minReleaseMarginS: int(env.MIN_RELEASE_MARGIN_S, 300, 60, 3600),
+    minReleaseMarginS: int(env.MIN_RELEASE_MARGIN_S, 300, MIN_RELEASE_MARGIN_FLOOR_S, 3600),
     studioReviewS: int(env.STUDIO_REVIEW_S, 86_400, 3600, 7 * 86_400),
-    studioKillFeeBps: int(env.STUDIO_KILL_FEE_BPS, 0, 0, 10_000),
+    studioKillFeeBps: int(env.STUDIO_KILL_FEE_BPS, 0, 0, MAX_KILL_FEE_BPS),
     studioMaxOpen: int(env.STUDIO_MAX_OPEN, 3, 0, 100),
     maxInflightOrders: int(env.MAX_INFLIGHT_ORDERS, 20, 1, 1000),
     receiptWaitMs: int(env.RECEIPT_WAIT_MS, 1200, 0, 10_000),
@@ -201,6 +223,14 @@ export function parseConfig(env: RawEnv): Config {
     formatsDisabled: new Set(list(env.FORMATS_DISABLED ?? "chart_moment")),
     policyDenylist: list(env.POLICY_DENYLIST),
     quotesPerBuyerPerHour: int(env.QUOTES_PER_BUYER_PER_HOUR, 30, 1, 10_000),
+    maxQueuedRenders: int(env.MAX_QUEUED_RENDERS, 50, 1, 10_000),
+    maxQueuedRendersPerClient: int(env.MAX_QUEUED_RENDERS_PER_CLIENT, 3, 1, 1000),
+    rateLimits: env.RATE_LIMITS !== "off",
+    relayerTxPerHour: int(env.RELAYER_TX_PER_HOUR, 120, 1, 100_000),
+    relayerLowBalanceWei:
+      env.RELAYER_LOW_BALANCE_WEI && /^[0-9]{1,30}$/.test(env.RELAYER_LOW_BALANCE_WEI)
+        ? BigInt(env.RELAYER_LOW_BALANCE_WEI)
+        : 500_000_000_000_000n,
     maintenance: env.MAINTENANCE === "1",
     secrets: { kmaster, relayerPrivateKey, workerToken, accessSecret },
     problems,

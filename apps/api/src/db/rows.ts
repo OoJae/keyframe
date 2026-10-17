@@ -33,6 +33,9 @@ export interface QuoteRow {
   created_at: number;
   finalized_at: number | null;
   updated_at: number;
+  /** 0002: in-flight late-fund action (unix s), and the hashed client bucket that created the quote. */
+  late_action_at?: number | null;
+  client_key?: string | null;
 }
 
 export interface PaymentRow {
@@ -49,6 +52,11 @@ export interface PaymentRow {
   error: string | null;
   created_at: number;
   updated_at: number;
+  /** 0002: sha256 of the exact payment header, authorization validBefore, pre-chosen order id, settle time. */
+  sig_sha256?: string | null;
+  valid_before?: number | null;
+  order_id?: string | null;
+  settled_at?: number | null;
 }
 
 export type OrderStatus = "funding" | "sealed" | "delivered" | "key_published" | "returned" | "void" | "failed";
@@ -85,6 +93,11 @@ export interface OrderRow {
   last_error: string | null;
   created_at: number;
   updated_at: number;
+  /** 0002: the one off-chain Studio revision, and an explicit accept verified off-chain after the review window. */
+  revision_manifest_hash?: string | null;
+  revision_preview_url?: string | null;
+  revision_delivered_at?: number | null;
+  buyer_accepted_at?: number | null;
 }
 
 export type JobKind = "instant_render" | "studio_delivery";
@@ -109,4 +122,6 @@ export interface JobRow {
   error: string | null;
   created_at: number;
   updated_at: number;
+  /** 0002: fairness bucket (client key, else buyer). */
+  owner?: string | null;
 }

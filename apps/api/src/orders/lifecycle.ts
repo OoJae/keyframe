@@ -1,8 +1,9 @@
 import { deriveKChain, keyframeFactoryAbi, payoutAt, Status, type Terms } from "@keyframe/protocol";
 import { encodeFunctionData, type Hex } from "viem";
-import type { OrderView } from "../chain.js";
+import { isTerminal, type OrderEvent, type OrderView } from "../chain.js";
 import type { OrderRow, PendingKind, QuoteRow } from "../db/rows.js";
 import { termsOf } from "../quotes/view.js";
+import { errorText } from "../redact.js";
 import type { RelayResult } from "../relayer/types.js";
 import { nowS, type Services } from "../services.js";
 import { termsTuple } from "../x402/facilitator.js";
@@ -15,6 +16,26 @@ export const RELEASE_GRACE_S = 3 * 86_400;
 const SLOT_STALE_S = 300;
 /** Safety margin so `charge <= payoutAt(T, block.timestamp)` still holds when the tx lands a little later. */
 const PAYOUT_MARGIN_S = 60;
+/**
+ * No release is sent this close to the last second it is valid (Instant: T.deadline; Studio: review end + grace):
+ * a release that lands late reverts after K_chain was already shown to the RPC and the mempool.
+ */
+export const RELEASE_SAFETY_S = 120;
+
+/**
+ * Studio policy after a "changes" request: Keyframe never releases on silence. The studio may deliver one revision
+ * (tracked off-chain; the contract knows one deliver), payment is released only on the buyer's explicit accept,
+ * and without an accept the keeper refunds the buyer after review end + RELEASE_GRACE_S. The buyer can accept or
+ * reject until `acceptBy` (on-chain inside the review window, verified off-chain after it).
+ */
+export const studioWindows = (o: Pick<OrderRow, "delivered_at">, t: Pick<Terms, "reviewWindow">) => {
+  const reviewEnd = (o.delivered_at ?? 0) + t.reviewWindow;
+  const graceEnd = reviewEnd + RELEASE_GRACE_S;
+  return { reviewEnd, graceEnd, acceptBy: graceEnd - RELEASE_SAFETY_S - 600 };
+};
+
+export const CHANGES_POLICY =
+  "After a change request Keyframe never releases payment on silence: the studio may deliver one revision, payment is released only when you explicitly accept, and if you do not accept by accept_by the keeper refunds you in full after the release grace period.";
 
 type Patch = Partial<OrderRow>;
 
@@ -57,12 +78,28 @@ export function patchFromChain(v: OrderView): Patch {
   }
 }
 
-async function chainPatch(s: Services, order: OrderRow): Promise<Patch> {
+/** Event whose transaction belongs in a terminal order's *_tx field, when we did not send it ourselves. */
+const TERMINAL_EVENT: Partial<Record<number, [OrderEvent, keyof OrderRow]>> = {
+  [Status.Released]: ["Released", "release_tx"],
+  [Status.Refunded]: ["Refunded", "refund_tx"],
+  [Status.Cancelled]: ["Cancelled", "cancel_tx"],
+  [Status.Rejected]: ["Decided", "decision_tx"],
+};
+
+async function chainPatch(s: Services, order: OrderRow, seen?: OrderView): Promise<Patch> {
   if (!s.chain) return {};
   try {
-    return patchFromChain(await s.chain.orderOf(s.cfg.factory, order.terms_hash as Hex));
+    const v = seen ?? (await s.chain.orderOf(s.cfg.factory, order.terms_hash as Hex));
+    const patch = patchFromChain(v);
+    // Someone else (buyer, refundExpired, KeeperHub) finished the order: fill the tx from the factory's event.
+    const ev = isTerminal(v.status) ? TERMINAL_EVENT[v.status] : undefined;
+    if (ev && !order[ev[1]]) {
+      const tx = await s.chain.eventTx(s.cfg.factory, ev[0], order.terms_hash as Hex).catch(() => null);
+      if (tx) (patch as Record<string, unknown>)[ev[1]] = tx;
+    }
+    return patch;
   } catch (e) {
-    s.log.warn("chain_read_failed", { order_id: order.id, error: e instanceof Error ? e.name : "error" });
+    s.log.warn("chain_read_failed", { order_id: order.id, error: errorText(e, 120) });
     return {};
   }
 }
@@ -88,7 +125,7 @@ export async function runAction(
   try {
     r = await s.relayer.send({ kind, ref: order.id, data, waitMs });
   } catch (e) {
-    r = { state: "unavailable", reason: e instanceof Error ? e.message.slice(0, 120) : "relayer_error" };
+    r = { state: "unavailable", reason: errorText(e, 120) };
   }
   const field = TX_FIELD[kind];
   const txPatch: Patch = "hash" in r && field ? { [field]: r.hash } : {};
@@ -98,10 +135,11 @@ export async function runAction(
       await s.repo.setPendingTx(order.id, kind, r.hash, nowS(s));
       return { state: "pending", hash: r.hash };
     case "confirmed":
+      // The order with our tx already set: chainPatch then never looks the tx up from events.
       await s.repo.finishPending(
         order.id,
         kind,
-        { ...extra, ...txPatch, last_error: null, ...(await chainPatch(s, order)) },
+        { ...extra, last_error: null, ...(await chainPatch(s, { ...order, ...txPatch })), ...txPatch },
         nowS(s),
       );
       s.log.info("order_action_confirmed", { order_id: order.id, kind, tx: r.hash });
@@ -109,7 +147,7 @@ export async function runAction(
     case "reverted":
     case "rejected":
     case "unavailable": {
-      const reason = r.reason;
+      const reason = errorText(r.reason, 200);
       // A revert usually means someone else already moved the order on-chain (keeper, buyer, KeeperHub).
       const sync = r.state === "unavailable" ? {} : await chainPatch(s, order);
       await s.repo.finishPending(order.id, kind, { last_error: `${kind}: ${reason}`.slice(0, 300), ...sync }, nowS(s));
@@ -202,12 +240,18 @@ export async function advanceOrder(s: Services, orderIn: OrderRow, waitMs: numbe
       return;
     case "delivered": {
       const deliveredAt = order.delivered_at ?? 0;
-      const reviewEnd = deliveredAt + t.reviewWindow;
-      if (now > reviewEnd + RELEASE_GRACE_S) {
+      const { reviewEnd, graceEnd } = studioWindows(order, t);
+      if (now > graceEnd) {
         await runAction(s, order, "refund", enc.refund(t), waitMs);
         return;
       }
-      if (order.accepted || now >= reviewEnd) await releaseStudio(s, order, quote, t, deliveredAt, waitMs);
+      // After a change request silence never counts as accept: only the buyer's explicit accept releases.
+      const changes = order.change_requested_at !== null && order.change_requested_at !== undefined;
+      const explicit = order.accepted === 1 || (order.buyer_accepted_at ?? null) !== null;
+      const due = changes
+        ? explicit && (order.accepted === 1 || now >= reviewEnd)
+        : order.accepted === 1 || now >= reviewEnd;
+      if (due && now <= graceEnd - RELEASE_SAFETY_S) await releaseStudio(s, order, quote, t, deliveredAt, waitMs);
       return;
     }
     case "failed":
@@ -227,10 +271,34 @@ async function confirmFunding(s: Services, order: OrderRow, waitMs: number): Pro
     const next = await s.repo.getOrder(order.id);
     if (next) await advanceOrder(s, next, waitMs);
   } else if (r.state === "reverted") {
+    // "Reverted" can be a false "dropped" from a lagging load-balanced node: the chain decides, not the receipt.
+    const funded = await fundedOnChain(s, order);
+    if (funded === null) return; // could not read: try again on the next pass
+    if (funded) {
+      s.log.warn("funding_receipt_contradicted", { order_id: order.id, tx: order.funding_tx, reason: r.reason });
+      await s.repo.updateOrder(order.id, { funding: "confirmed", status: "sealed", ...funded, last_error: null }, now);
+      const next = await s.repo.getOrder(order.id);
+      if (next) await advanceOrder(s, next, waitMs);
+      return;
+    }
     // Nothing moved. The authorization may still be executed by a third party (only into E), so a failed order
     // keeps being watched until its deadline for stranded funds.
-    await s.repo.updateOrder(order.id, { status: "failed", last_error: `funding: ${r.reason}` }, now);
+    await s.repo.updateOrder(order.id, { status: "failed", last_error: `funding: ${errorText(r.reason, 200)}` }, now);
     s.log.warn("funding_failed", { order_id: order.id, tx: order.funding_tx });
+  }
+}
+
+/** Registered on-chain (patch from order()), funds at E awaiting register (registered 0), not funded, or unknown. */
+async function fundedOnChain(s: Services, order: OrderRow): Promise<Patch | false | null> {
+  if (!s.chain) return null;
+  try {
+    const v = await s.chain.orderOf(s.cfg.factory, order.terms_hash as Hex);
+    if (v.status !== Status.None) return patchFromChain(v);
+    const bal = await s.chain.balanceOf(s.cfg.usdc, order.escrow as Hex);
+    return bal >= BigInt(order.amount) ? { registered: 0 } : false;
+  } catch (e) {
+    s.log.warn("chain_read_failed", { order_id: order.id, error: errorText(e, 120) });
+    return null;
   }
 }
 
@@ -248,9 +316,31 @@ async function ensureRegistered(s: Services, order: OrderRow, t: Terms, now: num
   await runAction(s, order, "register", enc.register(t), waitMs);
 }
 
+/**
+ * Release calldata carries K_chain, and the relayer's simulation already shows it to the RPC. So the order is read
+ * first and the call is built only if it can succeed now (the buyer may have rejected or refunded on-chain).
+ */
+async function releasable(s: Services, order: OrderRow, check: (v: OrderView) => boolean): Promise<boolean> {
+  if (!s.chain) return false;
+  let v: OrderView;
+  try {
+    v = await s.chain.orderOf(s.cfg.factory, order.terms_hash as Hex);
+  } catch (e) {
+    s.log.warn("chain_read_failed", { order_id: order.id, error: errorText(e, 120) });
+    return false;
+  }
+  if (check(v)) return true;
+  const patch = await chainPatch(s, order, v);
+  if (Object.keys(patch).length > 0) await s.repo.updateOrder(order.id, patch, nowS(s));
+  s.log.info("release_skipped", { order_id: order.id, chain_status: v.status });
+  return false;
+}
+
 async function releaseInstant(s: Services, order: OrderRow, quote: QuoteRow, t: Terms, now: number, waitMs: number) {
   const { kmaster } = s.cfg.secrets;
   if (!kmaster || !quote.manifest_hash) return;
+  if (now > t.deadline - RELEASE_SAFETY_S) return; // too close to the deadline: the keeper refunds after it
+  if (!(await releasable(s, order, (v) => v.status === Status.Open))) return;
   const key = await deriveKChain(kmaster, quote.id);
   const charge = payoutAt(t, now + PAYOUT_MARGIN_S);
   await runAction(s, order, "release", enc.release(t, key, charge, quote.manifest_hash as Hex), waitMs);
@@ -266,6 +356,13 @@ async function releaseStudio(
 ) {
   const { kmaster } = s.cfg.secrets;
   if (!kmaster || !order.manifest_hash) return;
+  const now = nowS(s);
+  const ok = await releasable(
+    s,
+    order,
+    (v) => v.status === Status.Delivered && (v.accepted || BigInt(now) >= v.deliveredAt + BigInt(t.reviewWindow)),
+  );
+  if (!ok) return;
   const key = await deriveKChain(kmaster, quote.id);
   const charge = payoutAt(t, deliveredAt);
   await runAction(s, order, "release", enc.release(t, key, charge, order.manifest_hash as Hex), waitMs);

@@ -14,6 +14,7 @@ import {
   type TransactionReceipt,
   WaitForTransactionReceiptTimeoutError,
 } from "viem";
+import { redact } from "../redact.js";
 import type { ReceiptResult, RelayLog, RelayRequest, RelayResult, TxKind } from "./types.js";
 
 // Relayer logic (runs inside the singleton Durable Object): one hot EOA (= T.operator), serialized nonces,
@@ -26,6 +27,9 @@ export interface RelayerStore {
   putTx(hash: Hex, tx: StoredTx): Promise<void>;
   getTx(hash: Hex): Promise<StoredTx | undefined>;
   deleteTx(hash: Hex): Promise<void>;
+  /** Hourly broadcast counter for the tx budget (optional: in-memory when absent). */
+  getCounter?(key: string): Promise<number | undefined>;
+  putCounter?(key: string, n: number): Promise<void>;
 }
 
 export interface StoredTx {
@@ -34,7 +38,15 @@ export interface StoredTx {
   kind: TxKind;
   ref: string;
   sentAt: number;
+  /** First time the tx looked dropped (nonce used, no receipt): it is declared dropped only if that persists. */
+  suspectSince?: number;
 }
+
+/** Nonce and receipt as seen by one node (a JSON-RPC batch reaches a single backend behind a load balancer). */
+export type ConsistentRead = (
+  address: Address,
+  hash: Hex,
+) => Promise<{ nonce: number; receipt: TransactionReceipt | null }>;
 
 export interface JournalEntry {
   hash: Hex;
@@ -54,7 +66,18 @@ export interface RelayerDeps {
   store: RelayerStore;
   journal?: (e: JournalEntry) => Promise<void>;
   nowS?: () => number;
+  /** Nonce + receipt from the same node before declaring a tx dropped (default: two sequential reads). */
+  consistentRead?: ConsistentRead;
+  /** Non-fund broadcasts allowed per clock hour (fundWithAuthorization is the buyer's payment: never refused). */
+  maxTxPerHour?: number;
+  /** Below this ETH balance (wei) every broadcast logs a loud alarm. */
+  lowBalanceWei?: bigint;
+  log?: (level: "warn" | "error", event: string, fields: Record<string, unknown>) => void;
 }
+
+/** A tx looks dropped (nonce consumed, no receipt) for at least this long before it is reported as dropped. */
+export const DROP_CONFIRM_S = 60;
+const BALANCE_CHECK_S = 300;
 
 const GAS_BUFFER_BPS = 12_000n;
 // Node answers that mean "not accepted into the pool" (so nothing was broadcast).
@@ -94,7 +117,7 @@ export function revertReason(err: unknown): string | null {
 }
 
 const shortError = (err: unknown): string =>
-  (err instanceof BaseError ? err.shortMessage : err instanceof Error ? err.message : String(err)).slice(0, 200);
+  redact(err instanceof BaseError ? err.shortMessage : err instanceof Error ? err.message : String(err), 200);
 
 function toLogs(r: TransactionReceipt): RelayLog[] {
   return r.logs.map((l) => ({ address: l.address, topics: [...l.topics] as Hex[], data: l.data }));
@@ -103,6 +126,8 @@ function toLogs(r: TransactionReceipt): RelayLog[] {
 export class RelayerCore {
   private lock: Promise<unknown> = Promise.resolve();
   private readonly d: RelayerDeps;
+  private readonly counters = new Map<string, number>();
+  private balanceCheckedAt = Number.NEGATIVE_INFINITY;
 
   constructor(deps: RelayerDeps) {
     this.d = deps;
@@ -130,6 +155,51 @@ export class RelayerCore {
     }
   }
 
+  private warn(level: "warn" | "error", event: string, fields: Record<string, unknown>): void {
+    try {
+      if (this.d.log) this.d.log(level, event, fields);
+      else console[level](JSON.stringify({ level, event, ...fields }));
+    } catch {
+      // logging must never break a send
+    }
+  }
+
+  private budgetKey(): string {
+    return `txs:${Math.floor(this.now() / 3600)}`;
+  }
+
+  private async budgetUsed(): Promise<number> {
+    const k = this.budgetKey();
+    return (await this.d.store.getCounter?.(k)) ?? this.counters.get(k) ?? 0;
+  }
+
+  private async countBroadcast(): Promise<void> {
+    const k = this.budgetKey();
+    const n = (await this.budgetUsed()) + 1;
+    this.counters.clear();
+    this.counters.set(k, n);
+    await this.d.store.putCounter?.(k, n);
+  }
+
+  /** Loud alarm when the hot key runs low on gas (checked at most every BALANCE_CHECK_S). */
+  private async checkBalance(): Promise<void> {
+    const min = this.d.lowBalanceWei;
+    if (min === undefined || this.now() - this.balanceCheckedAt < BALANCE_CHECK_S) return;
+    this.balanceCheckedAt = this.now();
+    try {
+      const bal = await this.d.client.getBalance({ address: this.address });
+      if (bal < min) {
+        this.warn("error", "relayer_low_balance", {
+          address: this.address,
+          balance_wei: bal.toString(),
+          min_wei: min.toString(),
+        });
+      }
+    } catch {
+      // the next broadcast checks again
+    }
+  }
+
   private async nextNonce(): Promise<number> {
     const [stored, chain] = await Promise.all([
       this.d.store.getNonce(),
@@ -150,6 +220,14 @@ export class RelayerCore {
     req: RelayRequest,
   ): Promise<{ state: "sent"; hash: Hex } | Extract<RelayResult, { state: "rejected" | "unavailable" }>> {
     const { client, account, factory } = this.d;
+    const max = this.d.maxTxPerHour;
+    if (max !== undefined && req.kind !== "fund") {
+      const used = await this.budgetUsed();
+      if (used >= max) {
+        this.warn("error", "relayer_tx_budget_exceeded", { kind: req.kind, ref: req.ref, used, max });
+        return { state: "unavailable", reason: "relayer tx budget exceeded for this hour" };
+      }
+    }
     let gas: bigint;
     try {
       gas = await client.estimateGas({ account: account.address, to: factory, data: req.data });
@@ -204,6 +282,8 @@ export class RelayerCore {
       }
       await this.d.store.putNonce(nonce + 1);
       await this.journal({ hash, kind: req.kind, ref: req.ref, nonce, status: "sent", at: this.now() });
+      await this.countBroadcast().catch(() => undefined);
+      await this.checkBalance();
       return { state: "sent", hash };
     }
     return { state: "unavailable", reason: "nonce_conflict" };
@@ -236,9 +316,19 @@ export class RelayerCore {
     return { state: "reverted", hash, reason: "reverted on-chain" };
   }
 
+  /** Nonce and receipt from one node when a ConsistentRead is wired; else the receipt is re-queried after the nonce. */
+  private async consistent(hash: Hex): Promise<{ nonce: number; receipt: TransactionReceipt | null }> {
+    if (this.d.consistentRead) return this.d.consistentRead(this.address, hash);
+    const nonce = await this.d.client.getTransactionCount({ address: this.address, blockTag: "latest" });
+    const receipt = await this.d.client.getTransactionReceipt({ hash }).catch(() => null);
+    return { nonce, receipt };
+  }
+
   /**
    * Receipt lookup with reconciliation: if the tx is unknown to the node but still in our raw-tx store and its
-   * nonce is unused, re-broadcast it; if the nonce was consumed by another tx, report it as dropped.
+   * nonce is unused, re-broadcast it. If the nonce was consumed, the receipt is re-read from the node that
+   * reported the nonce; only if it is still missing there for DROP_CONFIRM_S is the tx reported as dropped (a
+   * lagging node behind a load balancer must not turn a mined payment into "dropped").
    */
   async receipt(hash: Hex, waitMs: number): Promise<ReceiptResult | { state: "unknown"; hash: Hex }> {
     const { client } = this.d;
@@ -252,8 +342,12 @@ export class RelayerCore {
     try {
       const pendingTx = await client.getTransaction({ hash }).catch(() => null);
       if (!pendingTx && stored) {
-        const mined = await client.getTransactionCount({ address: this.address, blockTag: "latest" });
-        if (mined > stored.nonce) {
+        const seen = await this.consistent(hash);
+        if (seen.receipt) return await this.settleReceipt(hash, seen.receipt);
+        if (seen.nonce > stored.nonce) {
+          const since = stored.suspectSince ?? this.now();
+          if (stored.suspectSince === undefined) await this.d.store.putTx(hash, { ...stored, suspectSince: since });
+          if (this.now() - since < DROP_CONFIRM_S) return { state: "pending", hash };
           await this.d.store.deleteTx(hash);
           await this.journal({
             hash,

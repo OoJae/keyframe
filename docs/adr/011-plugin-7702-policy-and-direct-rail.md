@@ -34,8 +34,12 @@ escrow's guarantees are identical either way: funds at `E` can only reach `T.buy
 4. **`KEYFRAME_PRIMARY_RAIL=direct`** is plan B, in case PayBox refuses a per-order codeless payee. Every wallet
    then routes to the direct rail, or to `fund_first` for gas.
 5. **The direct rail runs the same checks.** `keyframe_commission_direct` re-runs every pre-proposal check,
-   including the live 402. It proposes `USDC.transfer(E, T.amount)` with value 0, and its text spells out the raw
-   calldata, because PayBox's window shows "to = USDC" and not the escrow. The deal is then registered by anyone
+   including the live 402 and the deal binding (`buyer`, `terms_hash`, ADR-009). It proposes `USDC.transfer(E,
+   T.amount)` with value 0, and its text spells out the raw calldata, because PayBox's window shows "to = USDC" and
+   not the escrow. Unlike x402, where PayBox fetches the 402 again at approval time, the direct rail **fixes the
+   payee in the calldata** the plugin built. x402 stays the default (one gasless approval), but the quote card and
+   the x402 payment text name the direct rail as the option that binds the payee, and both print the full escrow
+   address in groups of four for comparison. The deal is then registered by anyone
    through the permissionless `register(T)` (normally the backend). `keyframe_verify {mode: "funding", quote_id,
    tx_hash}` proves it from the receipt's `Transfer(buyer → E)` and the escrow balance, and reports "SEALED
    (registration pending)" until `order(h)` is `Open`.

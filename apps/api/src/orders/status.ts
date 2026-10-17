@@ -5,7 +5,7 @@ import { error, json } from "../http.js";
 import { manifestUrl, termsOf } from "../quotes/view.js";
 import { nowS, type Services } from "../services.js";
 import { accessToken, checkAccessToken } from "./access.js";
-import { RELEASE_GRACE_S } from "./lifecycle.js";
+import { CHANGES_POLICY, RELEASE_GRACE_S, studioWindows } from "./lifecycle.js";
 
 // GET /v1/orders/{order_id}?token= and GET /v1/orders?buyer=. Public views carry no secrets; with a valid
 // access_token the owner also gets k_buyer (private delivery) and, for private orders, the preview links.
@@ -27,6 +27,8 @@ function timeline(o: OrderRow) {
   if (o.funding === "confirmed") t.push({ at: null, event: "sealed", tx: o.funding_tx });
   if (o.delivered_at) t.push({ at: o.delivered_at, event: "delivered", tx: o.deliver_tx });
   if (o.change_requested_at) t.push({ at: o.change_requested_at, event: "changes_requested" });
+  if (o.revision_delivered_at) t.push({ at: o.revision_delivered_at, event: "revision_delivered" });
+  if (o.buyer_accepted_at) t.push({ at: o.buyer_accepted_at, event: "accepted" });
   if (o.status === "key_published") t.push({ at: null, event: "key_published", tx: o.release_tx });
   if (o.status === "returned") t.push({ at: null, event: "returned", tx: o.refund_tx ?? o.decision_tx });
   if (o.status === "void") t.push({ at: null, event: "void", tx: o.cancel_tx });
@@ -65,7 +67,24 @@ export async function orderView(s: Services, o: OrderRow, q: QuoteRow, owner: bo
     delivered_at: o.delivered_at,
     review_ends_at: reviewEndsAt,
     release_deadline: reviewEndsAt !== null ? reviewEndsAt + RELEASE_GRACE_S : null,
-    accepted: o.accepted === 1,
+    accepted: o.accepted === 1 || (o.buyer_accepted_at ?? null) !== null,
+    ...(o.change_requested_at
+      ? {
+          changes: {
+            requested_at: o.change_requested_at,
+            accept_by: studioWindows(o, t).acceptBy,
+            revision: o.revision_delivered_at
+              ? {
+                  delivered_at: o.revision_delivered_at,
+                  manifest_hash: o.revision_manifest_hash ?? null,
+                  manifest_url: o.revision_manifest_hash ? manifestUrl(s.cfg, o.revision_manifest_hash) : null,
+                  ...(showPrivate ? { preview_url: o.revision_preview_url ?? null } : {}),
+                }
+              : null,
+            policy: CHANGES_POLICY,
+          },
+        }
+      : {}),
     timeline: timeline(o),
     poll_after_s: POLL_S[o.status],
     access: owner ? "owner" : "public",

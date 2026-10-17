@@ -21,13 +21,16 @@ import {
 import { type Check, fail, pass, warn } from "./checks.js";
 import { type Config, type EnvName, findFactory, inList } from "./config.js";
 import { ToolError } from "./result.js";
-import { clean, shortAddr, usdc, utc } from "./text.js";
+import { quoted, shortAddr, usdc, utc } from "./text.js";
 
 export const ZERO32 = `0x${"0".repeat(64)}` as Hex;
 export const MAX_LIFETIME_S = 30 * 86_400;
 export const RELEASE_GRACE_S = 3 * 86_400;
 /** Plugin safety bound on how long a new payment may stay locked before it can be refunded. */
 export const MAX_LOCK_S = 7 * 86_400;
+/** Hard bounds for a NEW payment, matching the factory's caps (MAX_REVIEW_WINDOW = 14 days, killFeeBps <= 5000). */
+export const MAX_REVIEW_WINDOW_S = 14 * 86_400;
+export const MAX_KILL_FEE_BPS = 5_000;
 
 export const DERIVATION_FORMULA =
   "termsHash = EIP-712 hash of Terms under {name: Keyframe Escrow, version: 1, chainId: 8453, verifyingContract: factory}; " +
@@ -93,7 +96,7 @@ export function parseTerms(raw: unknown): Terms {
   } catch (error) {
     const issue = (error as { issues?: { path?: unknown[]; message?: string }[] }).issues?.[0];
     const where = issue?.path?.length ? `terms.${issue.path.join(".")}` : "terms";
-    throw new ToolError(`${clean(where, 60)} is invalid (${clean(issue?.message ?? "bad value", 120)}).`);
+    throw new ToolError(`${quoted(where, 60)} is invalid (${quoted(issue?.message ?? "bad value", 120)}).`);
   }
 }
 
@@ -134,6 +137,24 @@ export function shapeChecks(t: Terms): Check[] {
     );
   }
   return checks;
+}
+
+/**
+ * Payment-only bounds (not refunds: an older factory's deals must stay refundable): the review window is at most
+ * 14 days and the kill fee at most 50%, the caps the escrow factory enforces.
+ */
+export function dealBoundsCheck(t: Terms): Check {
+  const problems: string[] = [];
+  if (t.reviewWindow > MAX_REVIEW_WINDOW_S)
+    problems.push(`the review window is ${Math.round(t.reviewWindow / 3600)} h, more than 14 days`);
+  if (t.killFeeBps > MAX_KILL_FEE_BPS)
+    problems.push(`the kill fee is ${(t.killFeeBps / 100).toFixed(2)}% of the price, more than 50%`);
+  return problems.length === 0
+    ? pass(
+        "deal_bounds",
+        `review window ${Math.round(t.reviewWindow / 3600)} h (at most 14 days) and kill fee ${(t.killFeeBps / 100).toFixed(2)}% (at most 50%)`,
+      )
+    : fail("deal_bounds", `this plugin pays only deals within the escrow's caps: ${problems.join("; ")}`);
 }
 
 /** Plain-English payout schedule (pure). */

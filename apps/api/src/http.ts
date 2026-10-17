@@ -23,6 +23,47 @@ export const error = (status: number, e: ApiError, headers?: Record<string, stri
 export const notCharged = (status: number, e: ApiError, headers?: Record<string, string>): Response =>
   error(status, { ...e, charged: false }, headers);
 
+/**
+ * The authorization is being (or may have been) settled and the outcome is not known yet: never "charged: false".
+ * The client must retry the same request (same payment header) or poll; it must not sign a new payment.
+ */
+export const chargeUnknown = (status: number, e: ApiError, headers?: Record<string, string>): Response =>
+  error(status, { ...e, charged: "unknown" }, headers);
+
+export type BodyRead = { ok: true; bytes: Uint8Array } | { ok: false; response: Response };
+
+/**
+ * Reads at most `max` bytes: a declared Content-Length above the cap is refused before any byte is read, and an
+ * undeclared (chunked) body is streamed and cut off as soon as it passes the cap.
+ */
+export async function readBody(req: Request, max: number): Promise<BodyRead> {
+  const tooLarge = (): BodyRead => ({ ok: false, response: error(413, { error: "body_too_large", max }) });
+  const declared = req.headers.get("content-length");
+  if (declared !== null && (!/^\d{1,15}$/.test(declared.trim()) || Number(declared) > max)) return tooLarge();
+  if (!req.body) return { ok: true, bytes: new Uint8Array(0) };
+  const reader = req.body.getReader();
+  const parts: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = (await reader.read()) as { done: boolean; value?: Uint8Array };
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    if (total > max) {
+      await reader.cancel().catch(() => undefined);
+      return tooLarge();
+    }
+    parts.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let off = 0;
+  for (const p of parts) {
+    bytes.set(p, off);
+    off += p.byteLength;
+  }
+  return { ok: true, bytes };
+}
+
 export async function readJson(
   req: Request,
   maxBytes = 64 * 1024,
@@ -31,10 +72,10 @@ export async function readJson(
   if (!type.toLowerCase().startsWith("application/json")) {
     return { ok: false, response: error(415, { error: "unsupported_media_type", detail: "send application/json" }) };
   }
-  const text = await req.text();
-  if (text.length > maxBytes) return { ok: false, response: error(413, { error: "body_too_large" }) };
+  const body = await readBody(req, maxBytes);
+  if (!body.ok) return body;
   try {
-    return { ok: true, value: JSON.parse(text) };
+    return { ok: true, value: JSON.parse(new TextDecoder().decode(body.bytes)) };
   } catch {
     return { ok: false, response: error(400, { error: "invalid_json" }) };
   }

@@ -28,6 +28,10 @@ const ORDER_MUTABLE = new Set<keyof OrderRow>([
   "pending_tx",
   "pending_since",
   "last_error",
+  "revision_manifest_hash",
+  "revision_preview_url",
+  "revision_delivered_at",
+  "buyer_accepted_at",
 ]);
 
 const QUOTE_COLUMNS: (keyof QuoteRow)[] = [
@@ -61,6 +65,7 @@ const QUOTE_COLUMNS: (keyof QuoteRow)[] = [
   "created_at",
   "finalized_at",
   "updated_at",
+  "client_key",
 ];
 
 const ORDER_COLUMNS: (keyof OrderRow)[] = [
@@ -111,6 +116,17 @@ export interface SanctionsListRow {
   addresses: string;
 }
 
+/** What recordSettlement stores in the payment row (the replay store). */
+export interface SettledPayment {
+  fromLc: string;
+  nonce: string;
+  rail: string;
+  txHash: string;
+  status: number;
+  headers: string;
+  body: string;
+}
+
 export interface ChainTxRow {
   hash: string;
   kind: string;
@@ -133,7 +149,7 @@ export class Repo {
   /** Quote and (Instant) its render job, atomically. */
   async createQuote(q: QuoteRow, job: NewJob | null): Promise<void> {
     const stmts = [this.db.prepare(insertSql("quotes", QUOTE_COLUMNS)).bind(...QUOTE_COLUMNS.map((k) => v(q[k])))];
-    if (job) stmts.push(this.jobInsert({ ...job, quote_id: q.id }, q.created_at));
+    if (job) stmts.push(this.jobInsert({ ...job, quote_id: q.id, owner: q.client_key ?? q.buyer_lc }, q.created_at));
     await this.db.batch(stmts);
   }
 
@@ -296,14 +312,61 @@ export class Repo {
     return r.results;
   }
 
-  /** Direct-rail order: order row and quote → paid, atomically. */
-  async recordDirectOrder(order: OrderRow, now: number): Promise<void> {
-    await this.db.batch([
-      this.db.prepare(insertSql("orders", ORDER_COLUMNS)).bind(...ORDER_COLUMNS.map((k) => v(order[k]))),
-      this.db
-        .prepare("UPDATE quotes SET status = 'paid', order_id = ?, updated_at = ? WHERE id = ? AND status = 'settling'")
-        .bind(order.id, now, order.quote_id),
+  /**
+   * The order row, inserted only while the quote is still `settling` under exactly this claim. Re-running it (an
+   * ambiguous D1 error, the keeper adopting an orphan while the request path records it) inserts nothing.
+   */
+  private conditionalOrderInsert(order: OrderRow, claimFrom: string, claimNonce: string): SqlStatement {
+    const cols = ORDER_COLUMNS.join(", ");
+    const marks = ORDER_COLUMNS.map(() => "?").join(", ");
+    return this.db
+      .prepare(
+        `INSERT INTO orders (${cols}) SELECT ${marks}
+         WHERE EXISTS (SELECT 1 FROM quotes WHERE id = ? AND status = 'settling' AND pay_from = ? AND pay_nonce = ?)
+           AND NOT EXISTS (SELECT 1 FROM orders WHERE quote_id = ?)`,
+      )
+      .bind(...ORDER_COLUMNS.map((k) => v(order[k])), order.quote_id, claimFrom, claimNonce, order.quote_id);
+  }
+
+  private quotePaid(order: OrderRow, claimFrom: string, claimNonce: string, now: number): SqlStatement {
+    return this.db
+      .prepare(
+        `UPDATE quotes SET status = 'paid', order_id = ?, updated_at = ?
+         WHERE id = ? AND status = 'settling' AND pay_from = ? AND pay_nonce = ?
+           AND EXISTS (SELECT 1 FROM orders WHERE id = ?)`,
+      )
+      .bind(order.id, now, order.quote_id, claimFrom, claimNonce, order.id);
+  }
+
+  /** Direct-rail order: order row and quote → paid, atomically. False if the claim was no longer ours. */
+  async recordDirectOrder(order: OrderRow, now: number): Promise<boolean> {
+    const claimNonce = order.escrow.toLowerCase();
+    const [ins] = await this.db.batch([
+      this.conditionalOrderInsert(order, "direct", claimNonce),
+      this.quotePaid(order, "direct", claimNonce, now),
     ]);
+    return (ins?.meta.changes ?? 0) === 1;
+  }
+
+  /** Moves a settling quote to the back of the reconciliation queue (it stays `settling`). */
+  async touchSettling(id: string, now: number): Promise<void> {
+    await this.db.prepare("UPDATE quotes SET updated_at = ? WHERE id = ? AND status = 'settling'").bind(now, id).run();
+  }
+
+  /** Take the quote's single late-fund action slot (or one abandoned before `staleBefore`). */
+  async claimLateAction(id: string, now: number, staleBefore: number): Promise<boolean> {
+    const r = await this.db
+      .prepare("UPDATE quotes SET late_action_at = ? WHERE id = ? AND (late_action_at IS NULL OR late_action_at < ?)")
+      .bind(now, id, staleBefore)
+      .run();
+    return r.meta.changes === 1;
+  }
+
+  async releaseLateAction(id: string, at: number): Promise<void> {
+    await this.db
+      .prepare("UPDATE quotes SET late_action_at = NULL WHERE id = ? AND late_action_at = ?")
+      .bind(id, at)
+      .run();
   }
 
   /** Quotes stuck in `settling` (the worker died mid-settlement), for the keeper to reconcile. */
@@ -337,17 +400,28 @@ export class Repo {
       .first<PaymentRow>();
   }
 
-  /** Claim (from, nonce) for settlement: new row, or a previously failed attempt. False ⇒ someone else holds it. */
-  async claimPayment(fromLc: string, nonce: string, quoteId: string, wire: "v1" | "v2", now: number) {
+  /**
+   * Claim (from, nonce) for settlement: new row, or a previously failed attempt. False ⇒ someone else holds it.
+   * `bind` ties the eventual replay to the exact payment header and fixes the order id before money moves.
+   */
+  async claimPayment(
+    fromLc: string,
+    nonce: string,
+    quoteId: string,
+    wire: "v1" | "v2",
+    now: number,
+    bind: { sigSha256: string; validBefore: number; orderId: string },
+  ) {
     const r = await this.db
       .prepare(
-        `INSERT INTO payments (from_lc, nonce, quote_id, status, wire, created_at, updated_at)
-         VALUES (?, ?, ?, 'settling', ?, ?, ?)
+        `INSERT INTO payments (from_lc, nonce, quote_id, status, wire, created_at, updated_at, sig_sha256, valid_before, order_id)
+         VALUES (?, ?, ?, 'settling', ?, ?, ?, ?, ?, ?)
          ON CONFLICT (from_lc, nonce) DO UPDATE SET status = 'settling', quote_id = excluded.quote_id,
-           wire = excluded.wire, error = NULL, updated_at = excluded.updated_at
+           wire = excluded.wire, error = NULL, updated_at = excluded.updated_at, sig_sha256 = excluded.sig_sha256,
+           valid_before = excluded.valid_before, order_id = excluded.order_id
          WHERE payments.status = 'failed'`,
       )
-      .bind(fromLc, nonce, quoteId, wire, now, now)
+      .bind(fromLc, nonce, quoteId, wire, now, now, bind.sigSha256, bind.validBefore, bind.orderId)
       .run();
     return r.meta.changes === 1;
   }
@@ -385,29 +459,20 @@ export class Repo {
       .run();
   }
 
-  /** Settlement bookkeeping in one transaction: order row, quote → paid, payment → settled (replay store). */
-  async recordSettlement(
-    order: OrderRow,
-    payment: {
-      fromLc: string;
-      nonce: string;
-      rail: string;
-      txHash: string;
-      status: number;
-      headers: string;
-      body: string;
-    },
-    now: number,
-  ): Promise<void> {
-    await this.db.batch([
-      this.db.prepare(insertSql("orders", ORDER_COLUMNS)).bind(...ORDER_COLUMNS.map((k) => v(order[k]))),
-      this.db
-        .prepare("UPDATE quotes SET status = 'paid', order_id = ?, updated_at = ? WHERE id = ? AND status = 'settling'")
-        .bind(order.id, now, order.quote_id),
+  /**
+   * Settlement bookkeeping in one transaction: order row, payment → settled (replay store), quote → paid. Each
+   * statement is conditional on the quote still being `settling` under this (from, nonce) claim, so the request
+   * path and the keeper's orphan adoption can both run it and exactly one order results. True ⇔ this call
+   * inserted the order.
+   */
+  async recordSettlement(order: OrderRow, payment: SettledPayment, now: number): Promise<boolean> {
+    const [ins] = await this.db.batch([
+      this.conditionalOrderInsert(order, payment.fromLc, payment.nonce),
       this.db
         .prepare(
           `UPDATE payments SET status = 'settled', rail = ?, tx_hash = ?, response_status = ?, response_headers = ?,
-             response_body = ?, updated_at = ? WHERE from_lc = ? AND nonce = ?`,
+             response_body = ?, order_id = ?, settled_at = ?, updated_at = ?
+           WHERE from_lc = ? AND nonce = ? AND status = 'settling' AND EXISTS (SELECT 1 FROM orders WHERE id = ?)`,
         )
         .bind(
           payment.rail,
@@ -415,11 +480,16 @@ export class Repo {
           payment.status,
           payment.headers,
           payment.body,
+          order.id,
+          now,
           now,
           payment.fromLc,
           payment.nonce,
+          order.id,
         ),
+      this.quotePaid(order, payment.fromLc, payment.nonce, now),
     ]);
+    return (ins?.meta.changes ?? 0) === 1;
   }
 
   getOrder(id: string): Promise<OrderRow | null> {
@@ -517,13 +587,13 @@ export class Repo {
 
   // ---------------------------------------------------------------- jobs
 
-  private jobInsert(j: NewJob & { quote_id: string }, now: number): SqlStatement {
+  private jobInsert(j: NewJob & { quote_id: string; owner?: string | null }, now: number): SqlStatement {
     return this.db
       .prepare(
-        `INSERT INTO jobs (id, kind, quote_id, order_id, status, attempts, max_attempts, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'queued', 0, ?, ?, ?)`,
+        `INSERT INTO jobs (id, kind, quote_id, order_id, status, attempts, max_attempts, created_at, updated_at, owner)
+         VALUES (?, ?, ?, ?, 'queued', 0, ?, ?, ?, ?)`,
       )
-      .bind(j.id, j.kind, j.quote_id, j.order_id, j.max_attempts, now, now);
+      .bind(j.id, j.kind, j.quote_id, j.order_id, j.max_attempts, now, now, j.owner ?? null);
   }
 
   async insertJob(j: NewJob & { quote_id: string }, now: number): Promise<void> {
@@ -543,6 +613,11 @@ export class Repo {
       .first<JobRow>();
   }
 
+  /**
+   * Claim the next queued job, round-robin across owners (client bucket): a job's rank is the number of jobs of
+   * the same owner rendering or queued ahead of it, so one client's backlog cannot push everyone else back.
+   * Insertion order (rowid) breaks ties.
+   */
   async claimJob(workerId: string, kinds: readonly JobKind[], now: number, leaseS: number): Promise<JobRow | null> {
     const marks = kinds.map(() => "?").join(", ");
     for (let tries = 0; tries < 3; tries++) {
@@ -550,7 +625,14 @@ export class Repo {
         .prepare(
           `UPDATE jobs SET status = 'claimed', worker_id = ?, attempts = attempts + 1, lease_expires_at = ?,
              progress = 0, error = NULL, updated_at = ?
-           WHERE id = (SELECT id FROM jobs WHERE status = 'queued' AND kind IN (${marks}) ORDER BY created_at, id LIMIT 1)
+           WHERE id = (
+               SELECT j.id FROM jobs j WHERE j.status = 'queued' AND j.kind IN (${marks})
+               ORDER BY (
+                 SELECT COUNT(*) FROM jobs k
+                 WHERE k.owner = j.owner AND k.kind = j.kind
+                   AND (k.status = 'claimed' OR (k.status = 'queued' AND k.rowid < j.rowid))
+               ), j.rowid
+               LIMIT 1)
              AND status = 'queued'
            RETURNING *`,
         )
@@ -697,6 +779,18 @@ export class Repo {
     return r?.t ?? null;
   }
 
+  /** Queued + rendering Instant jobs: overall, and for one fairness bucket. */
+  async renderQueue(owner: string): Promise<{ total: number; owner: number }> {
+    const r = await this.db
+      .prepare(
+        `SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN owner = ? THEN 1 ELSE 0 END), 0) AS mine
+         FROM jobs WHERE kind = 'instant_render' AND status IN ('queued', 'claimed')`,
+      )
+      .bind(owner)
+      .first<{ total: number; mine: number }>();
+    return { total: r?.total ?? 0, owner: r?.mine ?? 0 };
+  }
+
   async queueDepth(): Promise<number> {
     const r = await this.db
       .prepare("SELECT COUNT(*) AS n FROM jobs WHERE status IN ('queued', 'claimed')")
@@ -780,6 +874,31 @@ export class Repo {
       .bind(before, limit)
       .all<ChainTxRow>();
     return r.results;
+  }
+
+  // ---------------------------------------------------------------- rate limits
+
+  /**
+   * Token bucket in one statement: refill by elapsed time (capped at `capacity`), then take one token if at least
+   * one is available. True ⇔ the request may proceed.
+   */
+  async takeToken(key: string, capacity: number, refillPerS: number, nowMs: number): Promise<boolean> {
+    const r = await this.db
+      .prepare(
+        `INSERT INTO rate_buckets (key, tokens, updated_ms) VALUES (?, ? - 1, ?)
+         ON CONFLICT (key) DO UPDATE SET
+           tokens = MIN(?, tokens + MAX(0, excluded.updated_ms - updated_ms) / 1000.0 * ?) - 1,
+           updated_ms = MAX(updated_ms, excluded.updated_ms)
+         WHERE MIN(?, tokens + MAX(0, excluded.updated_ms - updated_ms) / 1000.0 * ?) >= 1
+         RETURNING tokens`,
+      )
+      .bind(key, capacity, nowMs, capacity, refillPerS, capacity, refillPerS)
+      .all<{ tokens: number }>();
+    return r.results.length === 1;
+  }
+
+  async pruneRateBuckets(beforeMs: number): Promise<void> {
+    await this.db.prepare("DELETE FROM rate_buckets WHERE updated_ms < ?").bind(beforeMs).run();
   }
 
   // ---------------------------------------------------------------- locks

@@ -20,10 +20,27 @@ export interface OrderView {
   toBuyer: bigint;
 }
 
+export interface TokenTransfer {
+  from: Address;
+  value: bigint;
+  tx: Hex;
+}
+
+/** Factory events whose transaction fills an order's *_tx field when someone else moved the order. */
+export type OrderEvent = "Opened" | "Released" | "Refunded" | "Cancelled" | "Decided" | "Delivered";
+
 export interface ChainReader {
   orderOf(factory: Address, termsHash: Hex): Promise<OrderView>;
   balanceOf(token: Address, account: Address): Promise<bigint>;
   refundableCount(factory: Address, maxScan: number): Promise<bigint>;
+  /** eth_call of refundExpired(maxScan) from `from`: how many entries a real call would refund now. */
+  simulateRefundExpired(factory: Address, maxScan: number, from: Address): Promise<bigint>;
+  /** EIP-3009 authorizationState(authorizer, nonce) on the token: true once the authorization was used. */
+  authorizationState(token: Address, authorizer: Address, nonce: Hex): Promise<boolean>;
+  /** Token Transfer logs into `to` within the last `lookbackBlocks`. */
+  transfersTo(token: Address, to: Address, lookbackBlocks?: number): Promise<TokenTransfer[]>;
+  /** Hash of the tx that emitted `event(termsHash)` within the last `lookbackBlocks`, if any. */
+  eventTx(factory: Address, event: OrderEvent, termsHash: Hex, lookbackBlocks?: number): Promise<Hex | null>;
   blockTimestamp(blockNumber: bigint): Promise<bigint>;
   /** ERC-1271 / ERC-6492-aware checks for contract wallets (EOAs are verified offline first). */
   verifyTypedData(args: Parameters<PublicClient["verifyTypedData"]>[0]): Promise<boolean>;
@@ -70,6 +87,51 @@ export function viemChainReader(rpcUrl: string): ChainReader {
         functionName: "refundableCount",
         args: [BigInt(maxScan)],
       }),
+    async simulateRefundExpired(factory, maxScan, from) {
+      const { result } = await client.simulateContract({
+        address: factory,
+        abi: keyframeFactoryAbi,
+        functionName: "refundExpired",
+        args: [BigInt(maxScan)],
+        account: from,
+      });
+      return result as bigint;
+    },
+    authorizationState: (token, authorizer, nonce) =>
+      client.readContract({
+        address: token,
+        abi: erc20Abi,
+        functionName: "authorizationState",
+        args: [authorizer, nonce],
+      }),
+    async transfersTo(token, to, lookbackBlocks = 2_000) {
+      const latest = await client.getBlockNumber();
+      const logs = await client.getContractEvents({
+        address: token,
+        abi: erc20Abi,
+        eventName: "Transfer",
+        args: { to },
+        fromBlock: latest > BigInt(lookbackBlocks) ? latest - BigInt(lookbackBlocks) : 0n,
+        toBlock: latest,
+      });
+      return logs.map((l) => ({
+        from: (l.args as { from: Address }).from,
+        value: (l.args as { value: bigint }).value,
+        tx: l.transactionHash as Hex,
+      }));
+    },
+    async eventTx(factory, event, termsHash, lookbackBlocks = 9_000) {
+      const latest = await client.getBlockNumber();
+      const logs = await client.getContractEvents({
+        address: factory,
+        abi: keyframeFactoryAbi,
+        eventName: event,
+        args: { termsHash } as never,
+        fromBlock: latest > BigInt(lookbackBlocks) ? latest - BigInt(lookbackBlocks) : 0n,
+        toBlock: latest,
+      });
+      return (logs[0]?.transactionHash as Hex | undefined) ?? null;
+    },
     async blockTimestamp(blockNumber) {
       return (await client.getBlock({ blockNumber })).timestamp;
     },

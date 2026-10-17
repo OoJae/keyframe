@@ -59,6 +59,7 @@ export async function snapshot(
   const o = rpc.get(oRead);
   const b = rpc.get(bRead);
   const c = rpc.get(cRead);
+  const extraAgree = extra.every((r) => rpc.get(r).agree);
   const order = o.value;
   const code = c.value === undefined ? undefined : classifyEscrowCode(c.value, factory.vaultImpl);
   const n = (x: bigint | undefined) => (x === undefined || x === 0n ? null : Number(x));
@@ -83,7 +84,19 @@ export async function snapshot(
       to_buyer_atomic: order && order.status >= 3 ? order.toBuyer.toString() : null,
       rpcs_answered: rpc.responded,
       rpcs_configured: rpc.configured,
-      consistent: o.agree && b.agree && c.agree,
+      consistent: o.agree && b.agree && c.agree && extraAgree,
     },
   };
+}
+
+/**
+ * L4: at least two Base RPCs answered every read the decision depends on (the order record, the escrow balance and
+ * any extra read) and they all agree. One RPC alone, or a disagreement, never decides a proposal.
+ */
+export function crossChecked(s: Snapshot, extra: Read<unknown>[] = []): boolean {
+  const reads = [orderRead(s.view.factory, s.view.terms_hash), usdcRead(s.view.escrow), ...extra];
+  return reads.every((r) => {
+    const v = s.rpc.get(r);
+    return v.seen >= 2 && v.agree;
+  });
 }

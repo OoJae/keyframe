@@ -339,7 +339,16 @@ async function mcp(method, params, { clockOffsetMs = 0 } = {}) {
 
 const pluginCalls = [];
 /** One tools/call in a fresh process; results are validated with the starter's own validator (scripts/schema.mjs). */
-async function tool(name, args, opts = {}) {
+/** Payment tools take {quote_id, buyer, terms_hash} (frozen §8 pre-upload revision): fill the deal from the API. */
+async function withDeal(name, args) {
+  if (!["keyframe_commission", "keyframe_commission_direct"].includes(name) || !args?.quote_id || args.terms_hash)
+    return args;
+  const q = await (await fetch(`${api}/v1/quotes/${args.quote_id}`)).json();
+  return { quote_id: args.quote_id, buyer: args.buyer ?? q.buyer, terms_hash: q.terms_hash };
+}
+
+async function tool(name, argsIn, opts = {}) {
+  const args = await withDeal(name, argsIn);
   const op = await mcp("tools/call", { name, arguments: args }, opts);
   const result = op.message.result;
   check(

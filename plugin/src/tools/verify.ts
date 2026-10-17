@@ -12,7 +12,7 @@ import { fetchManifest, ipfsCidOf, manifestUrl, sourcesOf, verifyChunks } from "
 import { envelopeOf } from "../core/envelope.js";
 import { Budget } from "../core/net.js";
 import { type Snapshot, snapshot } from "../core/onchain.js";
-import { type Resolved, resolveOrder } from "../core/resolve.js";
+import { boundSpec, type Resolved, resolveOrder, SETTLING_TEXT } from "../core/resolve.js";
 import { dataResult, guarded, NOTHING_MOVED, ToolError } from "../core/result.js";
 import { shortAddr, shortHash, usdc, utc } from "../core/text.js";
 import { type Spec, Status, sha256Hex } from "../protocol/index.js";
@@ -131,6 +131,10 @@ async function funding(r: Resolved, input: VerifyInputT, budget: Budget, rpcUrls
   const s = await snapshot(rpcUrls, budget, r.factory, r.termsHash, r.escrow, extra);
   const amount = r.terms?.amount ?? r.paid?.amount;
   const checks = [...r.checks, ...onchainChecks(r, s)];
+  // L3: a receipt counts only when at least two Base RPCs return the same one; a single RPC could fabricate it.
+  const rcv = txHash ? s.rpc.get(receiptRead(txHash)) : null;
+  const receipt = rcv && rcv.seen >= 2 && rcv.agree ? rcv.value : undefined;
+  const receiptUnsettled = rcv !== null && rcv.seen > 0 && receipt === undefined;
   const o = s.order;
   if (!o || s.balance === undefined) {
     checks.push(skip("funded", "the escrow could not be read on Base"));
@@ -152,7 +156,15 @@ async function funding(r: Resolved, input: VerifyInputT, budget: Budget, rpcUrls
         `${usdc(s.balance)} USDC is sealed at ${shortAddr(r.escrow)}${o.status === Status.None ? " (on-chain registration pending)" : ", registered on Base"}`,
       ),
     );
-  } else if (txHash && o.status === Status.None && s.rpc.get(receiptRead(txHash)).value === null) {
+  } else if (r.paid?.charged === "unknown") {
+    // Keyframe's paid path does not know the outcome yet (still settling): neither sealed nor failed.
+    checks.push(
+      skip(
+        "funded",
+        `not sealed yet: Keyframe reports the payment as still settling (charged "unknown"); the escrow holds ${usdc(s.balance)} of ${usdc(amount)} USDC. Do not pay again; check again shortly`,
+      ),
+    );
+  } else if (txHash && o.status === Status.None && (receipt === null || receiptUnsettled)) {
     // The paid response may say funding "pending" (ADR-012): its transaction is broadcast but not mined yet. That is
     // not sealed and not verified, but not a failed payment either; telling the agent "failed" invites a second payment.
     checks.push(
@@ -164,10 +176,17 @@ async function funding(r: Resolved, input: VerifyInputT, budget: Budget, rpcUrls
   } else {
     checks.push(fail("funded", `the escrow holds ${usdc(s.balance)} of ${usdc(amount)} USDC: not (fully) paid`));
   }
-  if (txHash) {
-    const rc = s.rpc.get(receiptRead(txHash)).value;
+  if (txHash && rcv) {
+    const rc = receipt;
     const buyer = r.terms?.buyer;
-    if (rc === undefined) checks.push(skip("funding_tx", "the funding transaction could not be read"));
+    if (rcv.seen === 0) checks.push(skip("funding_tx", "the funding transaction could not be read"));
+    else if (rc === undefined)
+      checks.push(
+        skip(
+          "funding_tx",
+          `transaction ${shortHash(txHash)} is not confirmed by 2 agreeing Base RPCs (${rcv.seen} answered${rcv.agree ? "" : " and they DISAGREE"}); check again shortly`,
+        ),
+      );
     else if (rc === null) checks.push(skip("funding_tx", `transaction ${shortHash(txHash)} is not on Base (yet)`));
     else if (rc.status !== "success") checks.push(fail("funding_tx", `transaction ${shortHash(txHash)} reverted`));
     else if (!buyer || amount === undefined)
@@ -196,7 +215,8 @@ async function delivery(r: Resolved, input: VerifyInputT, budget: Budget, cfg: R
       ? getQuote(cfg, budget, (input.quote_id ?? r.paid?.quote_id) as string, NOTHING_MOVED).catch(() => null)
       : Promise.resolve(null);
   const [s, q] = await Promise.all([snapshot(cfg.rpcUrls, budget, r.factory, r.termsHash, r.escrow), quoteFetch]);
-  const spec: Spec | null = r.spec ?? q?.spec ?? null;
+  // M3: a brief only counts when it hashes to the deal's specHash (resolveOrder applies the same rule).
+  const spec: Spec | null = r.spec ?? (await boundSpec(q?.spec, r.terms));
   const checks = [...r.checks, ...onchainChecks(r, s)];
   const o = s.order;
   let mediaOut: { width: number; height: number; duration_ms: number } | null = null;
@@ -248,7 +268,12 @@ async function delivery(r: Resolved, input: VerifyInputT, budget: Budget, cfg: R
   if (isPrivate && spec?.kBuyerHash) {
     if (kBuyer === ZERO32) {
       checks.push(
-        fail("k_buyer", "this is a private order: pass k_buyer from the paid response (or keyframe_orders) to decrypt"),
+        fail(
+          "k_buyer",
+          r.paid?.secrets_withheld
+            ? "this is a private order and the paid response withholds k_buyer (a later replay): recover it with keyframe_orders (sign in with the buyer wallet), then pass k_buyer"
+            : "this is a private order: pass k_buyer from the paid response (or keyframe_orders) to decrypt",
+        ),
       );
       return { s, checks, deliveryOut: summaryOut(cfg, mh, manifest, 0), mediaOut };
     }
@@ -269,7 +294,7 @@ async function delivery(r: Resolved, input: VerifyInputT, budget: Budget, cfg: R
     checks.push(
       skip(
         "matches_brief",
-        "the brief (spec) was not available, so resolution and length were checked against the manifest only",
+        "no brief (spec) that hashes to the deal's specHash was available, so resolution and length were checked against the manifest only",
       ),
     );
   if (res.media) mediaOut = { width: res.media.width, height: res.media.height, duration_ms: res.media.durationMs };
@@ -325,8 +350,14 @@ function finish(
   const verdict = verdictOf(checks);
   const env = envelopeOf(s.order?.status, s.balance, r.terms?.amount ?? r.paid?.amount);
   const ref = r.paid?.order_id ? { order_id: r.paid.order_id } : r.quote ? { quote_id: r.quote.quote_id } : {};
-  const next =
-    env.envelope === "SEALED" || env.envelope === "NOT SEALED"
+  const settling = r.paid?.charged === "unknown" && env.envelope === "NOT SEALED";
+  const next = settling
+    ? {
+        tool: "keyframe_status",
+        input: { quote_id: r.quote?.quote_id ?? r.paid?.quote_id ?? null, wait_s: 6 },
+        note: "The payment is still being settled. Do not pay again; poll keyframe_status, then verify funding.",
+      }
+    : env.envelope === "SEALED" || env.envelope === "NOT SEALED"
       ? {
           tool: "keyframe_status",
           input: { ...ref, wait_s: 6 },
@@ -349,6 +380,17 @@ function finish(
   if (deliveryOut && typeof deliveryOut.manifest_url === "string") {
     lines.push(
       `Encrypted copy: ${deliveryOut.manifest_url} (chunks alongside). The key is public on Base, so this file stays openable even without Keyframe's server${r.spec?.delivery === "private" ? " (private order: with your k_buyer)" : ""}. Keyframe's download link is in keyframe_status.`,
+    );
+  }
+  if (r.paid?.charged === "unknown") lines.push(SETTLING_TEXT);
+  if (r.paid?.error === "settlement_recording_delayed") {
+    lines.push(
+      "Keyframe reports the payment as settled (charged: true) while the order is still being recorded. Do not pay again; check keyframe_status in a minute.",
+    );
+  }
+  if (r.paid?.order_id && !r.paid.access_token) {
+    lines.push(
+      `The paid response carries no access_token${r.paid.secrets_withheld ? " or k_buyer (secrets_withheld: Keyframe returns them only right after settlement)" : ""}. To read a private order or decrypt its file, recover them with keyframe_orders (sign in with the buyer wallet). Nothing needs to be paid again.`,
     );
   }
   if (next) lines.push(`Next: ${next.tool} (${next.note})`);

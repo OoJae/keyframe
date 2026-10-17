@@ -4,15 +4,19 @@
 // (any status) are ever used, so a proposal can only target Keyframe's own escrow contract.
 
 import { type Address, getAddress, type Hex, isAddressEqual } from "viem";
-import { escrowOf, type Quote, type Spec, SpecSchema, type Terms } from "../protocol/index.js";
+import { escrowOf, type Quote, type Spec, SpecSchema, specHash, type Terms } from "../protocol/index.js";
 import { ACCESS_TOKEN_RE, apiFailure, apiRequest, getQuote, ORDER_ID_RE, QUOTE_ID_RE } from "./api.js";
 import { type Check, fail, pass } from "./checks.js";
 import type { Config, FactoryEntry } from "./config.js";
 import { findFactory } from "./config.js";
-import { type Derived, derive, parseTerms, shapeChecks } from "./deal.js";
+import { type Derived, derive, parseTerms, RELEASE_GRACE_S, shapeChecks } from "./deal.js";
 import type { Budget } from "./net.js";
 import { ToolError } from "./result.js";
-import { capJson, shortAddr } from "./text.js";
+import { capRecord, quoted, shortAddr } from "./text.js";
+
+/** Keyframe's paid path answered `charged: "unknown"`: the payment may be settling. Never invite a second one. */
+export const SETTLING_TEXT =
+  'Keyframe reports the payment outcome as unknown (charged: "unknown"): it is still being settled. Do not pay again and do not sign a new payment; poll keyframe_status with the quote_id until the quote is paid, then call keyframe_verify with mode "funding".';
 
 const BYTES32 = /^0x[0-9a-fA-F]{64}$/;
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
@@ -26,16 +30,33 @@ export type PaidRef = {
   amount?: bigint;
   funding_tx?: Hex;
   k_buyer?: Hex;
+  /** What Keyframe says about the money: false = refused before settlement, true = settled, "unknown" = settling. */
+  charged?: boolean | "unknown";
+  /** Keyframe's machine-readable error code on a non-200 paid response (e.g. settlement_in_progress). */
+  error?: string;
+  /** A later replay of a settled payment: access_token / k_buyer are null by design (recover with keyframe_orders). */
+  secrets_withheld?: boolean;
+  /** HTTP 429: the request was rate limited and not processed. */
+  rate_limited?: boolean;
 };
 
 const str = (o: Record<string, unknown>, k: string, re: RegExp): string | undefined =>
   typeof o[k] === "string" && re.test(o[k] as string) ? (o[k] as string) : undefined;
 
+const POLL_QUOTE_RE = /^\/v1\/quotes\/(q_[1-9A-HJ-NP-Za-km-z]{22})$/;
+
+/**
+ * A Keyframe paid response, in any of its shapes: the 200 paid body (access_token / k_buyer may be null on a
+ * later replay, with secrets_withheld), 503 settlement_recording_delayed (charged true, order_id), 409
+ * settlement_in_progress (charged "unknown", the quote only in `poll`), a refusal (charged false) or a 429.
+ * Fields are taken one by one and only when well-formed; nothing here fails on a null.
+ */
 function asPaid(o: Record<string, unknown>): PaidRef | null {
+  const poll = typeof o.poll === "string" ? POLL_QUOTE_RE.exec(o.poll)?.[1] : undefined;
   const ref: PaidRef = {
     order_id: str(o, "order_id", ORDER_ID_RE),
     access_token: str(o, "access_token", ACCESS_TOKEN_RE),
-    quote_id: str(o, "quote_id", QUOTE_ID_RE),
+    quote_id: str(o, "quote_id", QUOTE_ID_RE) ?? poll,
     terms_hash: str(o, "terms_hash", BYTES32)?.toLowerCase() as Hex | undefined,
     escrow: str(o, "escrow", ADDRESS) as Address | undefined,
     funding_tx: str(o, "funding_tx", BYTES32)?.toLowerCase() as Hex | undefined,
@@ -43,7 +64,12 @@ function asPaid(o: Record<string, unknown>): PaidRef | null {
   };
   const amount = str(o, "amount", /^[1-9][0-9]{0,77}$/);
   if (amount) ref.amount = BigInt(amount);
-  return ref.order_id || ref.terms_hash ? ref : null;
+  if (o.charged === true || o.charged === false || o.charged === "unknown") ref.charged = o.charged;
+  const error = str(o, "error", /^[a-z][a-z0-9_]{0,63}$/);
+  if (error) ref.error = error;
+  if (o.secrets_withheld === true) ref.secrets_withheld = true;
+  if (error === "rate_limited" && o.processed === false) ref.rate_limited = true;
+  return ref.order_id || ref.terms_hash || ref.charged !== undefined || ref.rate_limited ? ref : null;
 }
 
 /** Finds the paid body inside a paid response or a get_request result (bounded depth, JSON strings unwrapped). */
@@ -99,6 +125,54 @@ export type ResolveInput = {
   paid_response?: unknown;
 };
 
+/** A Studio change request as Keyframe's order view reports it (`changes`), or null when there is none. */
+export type Changes = {
+  requestedAt: number;
+  /** Keyframe's `changes.accept_by`, never later than the on-chain review end + the 3-day release grace. */
+  acceptBy: number | null;
+  revisionDelivered: boolean;
+  /** Keyframe's own policy text: data, shown quoted. */
+  policy: string | null;
+};
+
+const posInt = (v: unknown): number | null => (typeof v === "number" && Number.isSafeInteger(v) && v > 0 ? v : null);
+
+/**
+ * Reads `changes {requested_at, accept_by, revision, policy}` from an order record. `reviewEnd` is the on-chain
+ * review end (deliveredAt + reviewWindow): accept_by is clamped to reviewEnd + grace, the last moment Keyframe can
+ * still release, so a backend cannot stretch the window in which the plugin asks for a signature.
+ */
+export function changesOf(order: Record<string, unknown> | null, reviewEnd: number | null): Changes | null {
+  const c = order?.changes;
+  if (typeof c !== "object" || c === null || Array.isArray(c)) return null;
+  const x = c as Record<string, unknown>;
+  const requestedAt = posInt(x.requested_at);
+  if (requestedAt === null) return null;
+  const raw = posInt(x.accept_by);
+  const acceptBy = raw === null || reviewEnd === null ? null : Math.min(raw, reviewEnd + RELEASE_GRACE_S);
+  return {
+    requestedAt,
+    acceptBy,
+    revisionDelivered: typeof x.revision === "object" && x.revision !== null,
+    policy: typeof x.policy === "string" && x.policy.trim() !== "" ? x.policy : null,
+  };
+}
+
+/**
+ * M3: the brief (spec) from Keyframe's API, only if it is exactly the one the deal commits to
+ * (sha256(JCS(spec)) == T.specHash). Without terms, or on any mismatch, there is no trusted brief (null).
+ */
+export async function boundSpec(spec: unknown, terms: Terms | null): Promise<Spec | null> {
+  if (!terms || typeof spec !== "object" || spec === null) return null;
+  const s = SpecSchema.safeParse(spec);
+  if (!s.success) return null;
+  try {
+    return (await specHash(s.data)) === terms.specHash.toLowerCase() ? s.data : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchOrder(
   cfg: Config,
   budget: Budget,
@@ -148,6 +222,22 @@ export async function resolveOrder(cfg: Config, budget: Budget, input: ResolveIn
   const quoteId = input.quote_id ?? paid?.quote_id;
   const orderId = input.order_id ?? paid?.order_id;
   const token = input.access_token ?? paid?.access_token;
+  const otherRef = input.terms !== undefined || input.terms_hash !== undefined || quoteId || orderId;
+  if (paid && !paid.order_id && !paid.terms_hash && !otherRef) {
+    // A paid response without a deal in it: say what it means for the money, never "failed, pay again".
+    if (paid.rate_limited) {
+      throw new ToolError(
+        `Keyframe rate-limited that payment request (HTTP 429): it was not processed. Do not sign a new payment; first check keyframe_status with the quote_id (an earlier attempt may still be settling). ${tail}`,
+      );
+    }
+    if (paid.charged === "unknown")
+      throw new ToolError(`${SETTLING_TEXT} Pass the quote_id to keyframe_status. ${tail}`);
+    if (paid.charged === false) {
+      throw new ToolError(
+        `Keyframe refused that payment before settling it (charged: false${paid.error ? `, ${quoted(paid.error)}` : ""}): no money moved. Check keyframe_status with the quote_id before anything else. ${tail}`,
+      );
+    }
+  }
 
   let terms: Terms | null = input.terms === undefined ? null : parseTerms(input.terms);
   let source: Resolved["source"] = terms ? "argument" : "none";
@@ -225,11 +315,7 @@ export async function resolveOrder(cfg: Config, budget: Budget, input: ResolveIn
     );
   }
 
-  let spec: Spec | null = quote?.spec ?? null;
-  if (!spec && order && typeof order.spec === "object") {
-    const s = SpecSchema.safeParse(order.spec);
-    if (s.success) spec = s.data;
-  }
-  const safeOrder = order ? (capJson(order) as Record<string, unknown>) : null;
+  const spec = await boundSpec(quote?.spec ?? order?.spec, terms);
+  const safeOrder = order ? (capRecord(order) as Record<string, unknown> | null) : null;
   return { source, terms, factory: entry, termsHash, escrow, derived, quote, spec, order: safeOrder, paid, checks };
 }

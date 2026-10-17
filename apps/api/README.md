@@ -6,18 +6,18 @@ payments through the escrow factory (contract-as-facilitator), and releases the 
 file exists. It also runs the refund keeper.
 
 The wire contract lives in `docs/design/frozen-interfaces.md` (§4–§7), which wins on any conflict. Design
-decisions are in ADR-002, 003, 012, 014 and 015 (`docs/adr/`).
+decisions are in ADR-002, 003, 012, 014, 015 and 019 (security hardening) in `docs/adr/`.
 
 ## HTTP surface
 
 | Route | What |
 |---|---|
 | `GET /v1/styles?tier&format` | Catalog: formats, styles, aspects, prices per duration, ETA, params, policy |
-| `POST /v1/quotes` | Body = `keyframe_quote` input (product-render-demo §A3). Validation → content policy → per-buyer rate limit → OFAC → keys (§4) → spec (§6) → Terms (§1). Instant: `draft` plus a render job. Studio: `final` |
-| `GET /v1/quotes/{q}` | §7 quote object (`draft → final`, `paid`, `expired`, `cancelled`) |
-| `POST /v1/quotes/{q}/rail` | Additive, best effort: check now for a direct `USDC.transfer` to E |
-| `ALL /v1/orders/{q}` | **x402 resource.** Unpaid: 402, byte-identical per quote. Draft: 425. Paid: 409. Expired or cancelled: 410. Paid request: replay → verify → checks (409 payer, 451 OFAC, 503 capacity, 410 expiry) → CAS → settle → 200 §7 paid body |
-| `GET /v1/orders/{o}?token=` | Order status and timeline. With the access token: `k_buyer` (private delivery) and private links |
+| `POST /v1/quotes` | Body = `keyframe_quote` input (product-render-demo §A3). Per-client rate limit → validation → content policy → per-buyer rate limit → OFAC → render-queue caps (per client and total) → keys (§4) → spec (§6) → Terms (§1). Instant: `draft` plus a render job. Studio: `final` |
+| `GET /v1/quotes/{q}` | §7 quote object (`draft → final`, `paid`, `expired`, `cancelled`). Additive: `payable`, `terms_final`; drafts also carry `escrow_status: "provisional_do_not_pay"` and a `notice` (their escrow and terms change when the quote turns final) |
+| `POST /v1/quotes/{q}/rail` | Additive, best effort: check now for a direct `USDC.transfer` to E. Rate limited per client; at most one late-fund action per quote at a time, none for dust |
+| `ALL /v1/orders/{q}` | **x402 resource.** Unpaid: 402, byte-identical per quote. Draft: 425. Paid: 409. Expired or cancelled: 410. Paid request: replay (bound to the exact header) → verify (EIP-3009 only, payer = `from`) → checks (409 payer, 451 OFAC, 503 capacity, 410 expiry) → claim → settle → record → 200 §7 paid body |
+| `GET /v1/orders/{o}` | Order status and timeline. With the access token (`Authorization: Bearer …`, or `?token=`): `k_buyer` (private delivery) and private links. Studio orders with a change request carry `changes {requested_at, accept_by, revision, policy}` |
 | `GET /v1/orders?buyer=` | Public list: ids and statuses |
 | `POST /v1/auth/siwe/challenge`, `/verify` | EIP-4361 recovery. Returns orders with fresh `access_token` and `k_buyer` |
 | `POST /v1/reviews/{o}/challenge`, `/submit` | Studio review: EIP-712 `Decision` relayed via `decideBySig`, or an off-chain `ChangeRequest` |
@@ -25,10 +25,44 @@ decisions are in ADR-002, 003, 012, 014 and 015 (`docs/adr/`).
 | `GET /files/*` | Public immutable artifacts (when `FILES_BASE_URL` is not an R2 custom domain) |
 | `/internal/*` | Bearer `WORKER_TOKEN`: the render worker and the Studio CLI (see below) |
 
-Refusals before settlement carry `"charged": false`. Instant order flow: quote (draft) → worker renders and
+Refusals before settlement carry `"charged": false`. Once a settlement may have started, the paid path answers
+either the paid body or `"charged": "unknown"` (409 `settlement_in_progress`: retry the same request with the same
+payment header, or poll the quote; never sign a second payment), or, when money moved but the order row could not
+be written yet, 503 `settlement_recording_delayed` with `"charged": true` and the order id. claim → settle → record
+runs inside a promise owned by `waitUntil`, so a client disconnect cannot cancel bookkeeping after money moved; the
+keeper adopts any settlement that still falls through (T registered or E funded ⇒ the order row, the same order id
+and the paid body are written; nothing at E and the authorization unused ⇒ the quote is reopened; never otherwise).
+
+The replay store is bound to `sha256` of the exact payment header. The stored body is returned in full only within
+120 s of settlement (and before the authorization's `validBefore`); later replays return the same body with
+`access_token` and `k_buyer` set to `null`, `secrets_withheld: true` and a `recover` hint (SIWE / `keyframe_orders`).
+A different header for an already settled `(from, nonce)` gets 409 `authorization_reused`.
+
+Instant order flow: quote (draft) → worker renders and
 encrypts → quote turns `final` with `T.contentHash = manifestHash` → 402 → paid → `fundWithAuthorization(T, auth)`
 → `release(T, K_chain, T.amount, manifestHash)`. Studio flow: paid → `deliver(T, manifestHash)` → buyer review →
 `release` after accept or the review window (or `refund`).
+
+## Studio review and change requests
+
+`POST /v1/reviews/{o}/challenge` returns EIP-712 typed data; `submit` verifies the buyer's signature and relays
+`decideBySig` (accept or reject) inside the on-chain review window (`review_ends_at`). Without a change request,
+silence counts as accept: the keeper releases after the review window.
+
+**After a `changes` request Keyframe never releases on silence.** The buyer signs `ChangeRequest(bytes32
+termsHash,uint256 deadline)` under the Keyframe Escrow domain (it cannot move money). Then:
+
+- The studio may deliver **one revision**: `POST /internal/studio/orders/{o}/delivery` opens a new delivery job for the
+  order (status stays `delivered`; the contract knows one `deliver`, so the revision's manifest and preview are
+  recorded off-chain under `changes.revision`). K_chain decrypts both files.
+- Payment is released **only on the buyer's explicit accept**: inside the review window via `decideBySig`; after it
+  (until `accept_by` = review end + 3 days − 12 min) the signed `Decision(accept=true)` is verified off-chain and the
+  operator releases. A reject after the window is answered with `cancel` (everything back to the buyer).
+- If the buyer does not accept by review end + grace, the keeper refunds the buyer in full.
+
+The policy text is returned as `policy` in the change-request challenge/submit responses and in the order view.
+No release is ever sent within 120 s of the last valid second (Instant: the deadline; Studio: review end + grace),
+and `order()` is read before release calldata (which carries K_chain) is built.
 
 ## Catalog and templates
 
@@ -49,7 +83,10 @@ src/app.ts               Hono routes (thin)
 src/config.ts            vars + secrets → typed Config (problems listed by name; values never logged)
 src/quotes/              request schema, content policy, spec/terms assembly, service, §7 view
 src/x402/                payment header decoding, x402HTTPResourceServer runtime + canonical adapter, facilitator
-src/orders/              paid path, post-funding lifecycle, direct rail, status/list, access tokens
+src/orders/              paid path, settlement bookkeeping + orphan adoption (settle.ts), post-funding lifecycle,
+                         direct rail, status/list, access tokens
+src/ratelimit.ts         per-client D1 token buckets (+ optional Cloudflare Rate Limiting binding)
+src/redact.ts            error text without RPC URLs, request bodies or key-like tokens
 src/internal/jobs.ts     render-worker and Studio delivery API
 src/delivery/            K_file derivation, artifact validation and self-verification (KFC1)
 src/relayer/             RelayerCore (nonces, simulate-then-send, raw-tx store, reconciliation) + Durable Object
@@ -57,7 +94,7 @@ src/chain.ts             read-only viem client (+ read-only signer for the x402 
 src/sanctions.ts         OFAC SDN ETH list: fetch, validate, cache in D1, fail closed when stale
 src/keeper.ts            cron tick
 src/db/                  typed D1 queries (every transition is a conditional UPDATE)
-migrations/0001_init.sql D1 schema
+migrations/               D1 schema: 0001_init.sql, 0002_hardening.sql (additive columns + rate_buckets)
 ```
 
 ## Configuration
@@ -73,8 +110,10 @@ Vars live in `wrangler.toml`, secrets in `wrangler secret put` (locally: `.dev.v
 | `USDC_ADDRESS` | var | Default: Base USDC. Override only for local chains |
 | `X402_WIRE` | var | `v2` (default) or `v1` |
 | `FACILITATOR_FALLBACK_URL` | var | Default PayAI. Used only when the relayer cannot broadcast. `""` disables it |
-| `QUOTE_TTL_S` 600 · `DRAFT_TTL_S` 900 · `MIN_RELEASE_MARGIN_S` 300 · `RECEIPT_WAIT_MS` 1200 | var | Timing |
-| `STUDIO_REVIEW_S` 86400 · `STUDIO_KILL_FEE_BPS` 0 · `STUDIO_MAX_OPEN` 3 · `MAX_INFLIGHT_ORDERS` 20 | var | Studio terms and capacity gate |
+| `QUOTE_TTL_S` 600 · `DRAFT_TTL_S` 900 · `MIN_RELEASE_MARGIN_S` 300 (≥ 180) · `RECEIPT_WAIT_MS` 1200 | var | Timing. Instant `deadline_minutes × 60` must be ≥ `MIN_RELEASE_MARGIN_S` |
+| `STUDIO_REVIEW_S` 86400 (≤ 7 d) · `STUDIO_KILL_FEE_BPS` 0 (≤ 5000) · `STUDIO_MAX_OPEN` 3 · `MAX_INFLIGHT_ORDERS` 20 | var | Studio terms and capacity gate. A kill fee above 5000 is a configuration problem (the factory refuses it) |
+| `MAX_QUEUED_RENDERS` 50 · `MAX_QUEUED_RENDERS_PER_CLIENT` 3 · `RATE_LIMITS` (`off` disables) | var | Render-queue caps (per hashed client IP) and the D1 token buckets |
+| `RELAYER_TX_PER_HOUR` 120 · `RELAYER_LOW_BALANCE_WEI` 5e14 | var | Relayer DO: non-fund transactions per clock hour (beyond it sends are refused and logged loudly; `fundWithAuthorization` is never refused) and the low-ETH alarm |
 | `OFAC_MAX_AGE_S` 7 d · `OFAC_REFRESH_S` 6 h · `OFAC_LIST_URL` | var | Sanctions list (0xB10C ETH list by default) |
 | `FORMATS_DISABLED` (`chart_moment`) · `POLICY_DENYLIST` · `QUOTES_PER_BUYER_PER_HOUR` 30 · `MAINTENANCE` | var | Product switches |
 | `KMASTER` | secret | ≥ 32 bytes hex. Derives K_chain and K_buyer per quote (§4). Rotating it orphans unreleased keys |
@@ -82,7 +121,9 @@ Vars live in `wrangler.toml`, secrets in `wrangler secret put` (locally: `.dev.v
 | `WORKER_TOKEN` | secret | ≥ 32 chars. Bearer token for `/internal/*` |
 | `ACCESS_SECRET` | secret | ≥ 32 bytes hex. `access_token = b64url(HMAC(ACCESS_SECRET, "kf/access/v1/" ‖ order_id))` |
 
-Bindings: `DB` (D1), `KV` (KV), optional `FILES` (R2; otherwise KV stores artifacts), `RELAYER` (Durable Object).
+Bindings: `DB` (D1), `KV` (KV), optional `FILES` (R2; otherwise KV stores artifacts), `RELAYER` (Durable Object),
+optional `RATE_LIMITER` (Workers Rate Limiting, `[[ratelimits]]` in `wrangler.toml`: caps every `/v1` request per
+client at the edge, in addition to the D1 token buckets on quotes, `/rail`, paid requests, SIWE and reviews).
 If anything required is missing, `/health` reports `configured: false` and quoting or settlement answer 503.
 
 ## Develop and test
@@ -185,4 +226,13 @@ verification.md §7.3.
   nothing is broadcast.
 - Funds can only move to `T.buyer` or `T.seller` (contract invariant I1). The API's worst case is a delay, never
   a redirect.
-- Content policy (`src/quotes/policy.ts`) runs before quoting. Studio briefs also get human review.
+- Content policy (`src/quotes/policy.ts`) runs before quoting, on NFKC-normalised text with invisible characters
+  removed and Cyrillic/Greek lookalikes and leetspeak folded, including spelled-out words ("n.a.z.i") and every
+  nested string of catalog values and portfolio data; bare domains count as links. Studio briefs also get human
+  review.
+- Hardening from the 2026-10 review (ADR-019): replay bound to the exact payment header and short-lived; Permit2 /
+  mixed payloads refused and the verifier's payer must equal the authorization's `from`; settlement owned by
+  `waitUntil` with keeper adoption of orphans; "dropped" only after a consistent read and a confirmation delay, and
+  never trusted over `order(termsHash)`; refundExpired only after an `eth_call` shows progress; a per-hour relayer
+  transaction budget and a low-ETH alarm; every direct-rail sender screened against OFAC; per-client throttling,
+  round-robin render claims and streamed body caps; RPC URLs and keys redacted from logged and stored errors.

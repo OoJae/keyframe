@@ -221,13 +221,29 @@ export type QuoteInputT = z.infer<typeof QuoteInput>;
 
 // ---------- payment, status, verify, refund, review, orders ----------
 
-export const CommissionInput = z.object({ quote_id: QuoteId }).strict();
+// H1: both payment tools are bound to the deal the user reviewed. buyer and terms_hash come from keyframe_quote's
+// (or keyframe_status's) next.input; the plugin refuses if the backend now serves another buyer or another deal.
+// Plugin-only fields: they are never sent to the API.
+export const CommissionInput = z
+  .object({
+    quote_id: QuoteId,
+    buyer: AddressIn.describe(
+      "the buyer wallet address from keyframe_quote's next.input (the wallet that pays; refunds can only go there)",
+    ),
+    terms_hash: Bytes32In.describe(
+      "terms_hash from keyframe_quote's next.input: the deal checked there; payment is refused if the deal changed",
+    ),
+  })
+  .strict();
 
 export const StatusInput = z
   .object({
     quote_id: QuoteId.optional(),
     order_id: OrderId.optional(),
     access_token: AccessToken.optional(),
+    buyer: AddressIn.optional().describe(
+      "the buyer wallet address the quote was requested for; checked against the deal (refunds can only go there)",
+    ),
     wait_s: z.int().min(0).max(6).default(0).describe("wait up to this many seconds for a change"),
   })
   .strict()

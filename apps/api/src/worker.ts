@@ -45,6 +45,7 @@ function services(env: WorkerEnv): Services {
     receiptWaitMs: cfg.receiptWaitMs,
     chain,
     factory: cfg.factory,
+    usdc: cfg.usdc,
   });
   const s: Services = {
     cfg,
@@ -57,6 +58,7 @@ function services(env: WorkerEnv): Services {
     x402: new X402Runtime(facilitator, cfg.usdc),
     nowMs: () => Date.now(),
     log: consoleLogger,
+    ...(env.RATE_LIMITER ? { edgeLimiter: env.RATE_LIMITER } : {}),
   };
   cache.set(env, s);
   return s;

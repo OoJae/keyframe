@@ -21,6 +21,13 @@ function consistent(q: Record<string, Json>, factory: Address = FACTORY, vault: 
 
 type Case = { name: string; expect: RegExp; arrange: (w: World) => void };
 
+/** The payment input an agent holds: the quote id plus the buyer wallet and the deal hash it was shown. */
+const payInput = (rec: { quote: Record<string, Json>; termsHash: string }) => ({
+  quote_id: rec.quote.quote_id,
+  buyer: BUYER.address,
+  terms_hash: rec.quote.terms_hash ?? rec.termsHash,
+});
+
 const cases: Case[] = [
   {
     name: "402 pays an attacker instead of the escrow",
@@ -304,7 +311,7 @@ async function quoteThenPay(world: World, tool: ToolDef) {
   world.hooks = hooks;
   hooks.quote?.(rec.quote, rec);
   await new Promise((r) => setTimeout(r, 0));
-  return call(tool, { quote_id: rec.quote.quote_id });
+  return call(tool, payInput(rec));
 }
 
 describe.each([commissionTool, commissionDirectTool])("$name refuses hostile backends", (tool) => {
@@ -331,7 +338,7 @@ describe.each([commissionTool, commissionDirectTool])("$name refuses hostile bac
     );
     rec.quote.status = status;
     rec.draftPolls = 99;
-    const r = await call(tool, { quote_id: rec.quote.quote_id });
+    const r = await call(tool, payInput(rec));
     expect(r.isError).toBe(true);
     expect(r.text).toMatch(expected);
     expect(JSON.stringify(r)).not.toContain(PROPOSAL);
@@ -343,21 +350,29 @@ describe.each([commissionTool, commissionDirectTool])("$name refuses hostile bac
       quoteTool.inputSchema.parse(stingInput(BUYER.address)) as Record<string, unknown>,
     );
     rec.quote.quote_expires_at = Math.floor(Date.now() / 1000) + 30;
-    const r = await call(tool, { quote_id: rec.quote.quote_id });
+    const r = await call(tool, payInput(rec));
     expect(r.isError).toBe(true);
     expect(r.text).toMatch(/expires in under 90 seconds/);
   });
 
   it("refuses an unknown quote and a malformed quote", async () => {
     const world = setup();
-    expect((await call(tool, { quote_id: "q_1111111111111111111111" })).text).toMatch(/HTTP 404/);
+    expect(
+      (
+        await call(tool, {
+          quote_id: "q_1111111111111111111111",
+          buyer: BUYER.address,
+          terms_hash: `0x${"11".repeat(32)}`,
+        })
+      ).text,
+    ).toMatch(/HTTP 404/);
     const rec = await world.createQuote(
       quoteTool.inputSchema.parse(stingInput(BUYER.address)) as Record<string, unknown>,
     );
     delete rec.quote.terms;
-    const r = await call(tool, { quote_id: rec.quote.quote_id });
+    const r = await call(tool, payInput(rec));
     expect(r.isError).toBe(true);
-    expect(r.text).toMatch(/does not match the frozen v1 format \(at terms\)/);
+    expect(r.text).toMatch(/does not match the frozen v1 format \(at "terms"\)/);
   });
 
   it("refuses when the payment URL already reports paid (HTTP 409)", async () => {
@@ -368,7 +383,7 @@ describe.each([commissionTool, commissionDirectTool])("$name refuses hostile bac
     const rec = await world.createQuote(
       quoteTool.inputSchema.parse(stingInput(BUYER.address)) as Record<string, unknown>,
     );
-    const r = await call(tool, { quote_id: rec.quote.quote_id });
+    const r = await call(tool, payInput(rec));
     expect(r.isError).toBe(true);
     expect(r.text).toMatch(/already paid/);
   });
@@ -378,7 +393,7 @@ describe.each([commissionTool, commissionDirectTool])("$name refuses hostile bac
     const rec = await world.createQuote(
       quoteTool.inputSchema.parse(stingInput(BUYER.address)) as Record<string, unknown>,
     );
-    const r = await call(tool, { quote_id: rec.quote.quote_id });
+    const r = await call(tool, payInput(rec));
     expect(r.isError).toBe(true);
     expect(r.text).toMatch(/factory_allowlisted/);
     expect(r.text).toMatch(/seller_allowlisted/);
@@ -390,7 +405,7 @@ describe.each([commissionTool, commissionDirectTool])("$name refuses hostile bac
       const rec = await world.createQuote(
         quoteTool.inputSchema.parse(stingInput(BUYER.address)) as Record<string, unknown>,
       );
-      const r = await call(tool, { quote_id: rec.quote.quote_id });
+      const r = await call(tool, payInput(rec));
       expect(r.isError).toBe(true);
       expect(r.text).toMatch(/paused for maintenance/);
     }
@@ -402,7 +417,7 @@ describe.each([commissionTool, commissionDirectTool])("$name refuses hostile bac
       quoteTool.inputSchema.parse(stingInput(BUYER.address)) as Record<string, unknown>,
     );
     world.delays.set("api.kf.test", 6_000);
-    const r = await call(tool, { quote_id: rec.quote.quote_id });
+    const r = await call(tool, payInput(rec));
     expect(r.isError).toBe(true);
     expect(r.text).toMatch(/timed out/);
     expect(r.ms).toBeLessThan(4_500);
@@ -419,7 +434,7 @@ describe.each([commissionTool, commissionDirectTool])("$name refuses hostile bac
       if (new URL(req.url).pathname.startsWith("/v1/orders/")) await new Promise((r) => setTimeout(r, 6_000));
       return orig(req);
     };
-    const r = await call(tool, { quote_id: rec.quote.quote_id });
+    const r = await call(tool, payInput(rec));
     expect(r.isError).toBe(true);
     expect(r.text).toMatch(/live_402.*timed out/);
     expect(r.ms).toBeLessThan(8_500);

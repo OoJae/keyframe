@@ -115,7 +115,8 @@ export function planQuote(r: QuoteRequest, cfg: Config, nowS?: number): ({ ok: t
       } else durationS = Number(Object.keys(item.prices)[0]);
       const rest: Record<string, unknown> = { ...r.params };
       // Countdown frames depend on "time left"; anchor them to quote time so the render is reproducible from the spec.
-      if (r.format === "countdown" && nowS !== undefined) rest.as_of = new Date(nowS * 1000).toISOString().replace(/\.\d{3}Z$/, "Z");
+      if (r.format === "countdown" && nowS !== undefined)
+        rest.as_of = new Date(nowS * 1000).toISOString().replace(/\.\d{3}Z$/, "Z");
       if (r.format === "portfolio_pulse" && rest.portfolio !== undefined) {
         dataSnapshot = specSafe(rest.portfolio);
         delete rest.portfolio;

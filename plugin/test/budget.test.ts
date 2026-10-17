@@ -59,8 +59,8 @@ describe("every tool stays inside the 8.5 s budget when all hosts hang (6 s)", (
     const inputs: Record<string, unknown> = {
       keyframe_styles: {},
       keyframe_quote: stingInput(BUYER.address),
-      keyframe_commission: { quote_id: qid },
-      keyframe_commission_direct: { quote_id: qid },
+      keyframe_commission: { quote_id: qid, buyer: BUYER.address, terms_hash: rec.termsHash },
+      keyframe_commission_direct: { quote_id: qid, buyer: BUYER.address, terms_hash: rec.termsHash },
       keyframe_status: { order_id: rec.orderId, wait_s: 6 },
       keyframe_verify: { mode: "delivery", terms: rec.quote.terms, factory: rec.quote.factory },
       keyframe_refund: { action: "refund", terms: rec.quote.terms, factory: rec.quote.factory },

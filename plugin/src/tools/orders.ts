@@ -8,13 +8,17 @@ import { loadConfig } from "../core/config.js";
 import { Budget } from "../core/net.js";
 import { dataResult, guarded, NOTHING_MOVED, ToolError } from "../core/result.js";
 import { checkSiwe } from "../core/siwe.js";
-import { capJson, clean, nowSeconds, shortAddr, utc } from "../core/text.js";
+import { capRecord, capRecords, nowSeconds, quoted, shortAddr, utc } from "../core/text.js";
 import { OrdersInput, OrdersOutput } from "../schemas.js";
 import { COPY } from "./copy.js";
 import { defineTool } from "./define.js";
 
 const MAX_ORDERS = 50;
 const ID = /^o_[1-9A-HJ-NP-Za-km-z]{22}$/;
+/** L1: one listed order is a handful of short fields; the whole list stays far below the stdout limit. */
+const MAX_ORDER_BYTES = 4 * 1024;
+const MAX_LIST_BYTES = 96 * 1024;
+const ORDER_CAPS = { maxString: 300, maxArray: 10, maxKeys: 30, maxDepth: 3 };
 
 function orderList(json: unknown, withSecrets: boolean): Record<string, unknown>[] {
   const raw = (json as { orders?: unknown } | null)?.orders;
@@ -22,8 +26,8 @@ function orderList(json: unknown, withSecrets: boolean): Record<string, unknown>
   const out: Record<string, unknown>[] = [];
   for (const item of raw.slice(0, MAX_ORDERS)) {
     if (typeof item !== "object" || item === null) continue;
-    const o = capJson(item, { maxString: 300, maxArray: 10, maxKeys: 30, maxDepth: 3 }) as Record<string, unknown>;
-    if (typeof o.order_id !== "string" || !ID.test(o.order_id)) continue;
+    const o = capRecord(item, ORDER_CAPS, MAX_ORDER_BYTES) as Record<string, unknown> | null;
+    if (!o || typeof o.order_id !== "string" || !ID.test(o.order_id)) continue;
     if (!withSecrets) {
       delete o.access_token;
       delete o.k_buyer;
@@ -42,13 +46,13 @@ function orderList(json: unknown, withSecrets: boolean): Record<string, unknown>
     }
     out.push(o);
   }
-  return out;
+  return capRecords(out, MAX_ORDER_BYTES, MAX_LIST_BYTES);
 }
 
 const listLine = (orders: Record<string, unknown>[]) =>
   orders
     .slice(0, 10)
-    .map((o) => `- ${o.order_id}: ${clean(o.status ?? "unknown", 40)}`)
+    .map((o) => `- ${o.order_id}: ${quoted(o.status ?? "unknown", 40)}`)
     .join("\n");
 
 export const ordersTool = defineTool({

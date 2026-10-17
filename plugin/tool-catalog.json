@@ -4,7 +4,7 @@
   "frozenInterfaces": "v1",
   "protocolVersion": "2026-07-28",
   "toolCount": 9,
-  "sha256": "80aa5fe49208cd076d13008c6c79693abc5a83fe9e2ff15a03d5c7f183c7bea2",
+  "sha256": "124f42e24caa5cc2851d722cbb427dc3001b0320346affa4064e5fae321661a2",
   "tools": [
     {
       "name": "keyframe_styles",
@@ -1077,7 +1077,7 @@
     {
       "name": "keyframe_commission",
       "title": "Keyframe · 2. pay into escrow (1 approval)",
-      "description": "Creates the payment for a quote as one PayBox approval: an x402 payment of the quoted USDC on Base, gasless for the payer. The money goes to the order's escrow address, never to Keyframe directly. It can pay the studio only if the studio publishes the key to the buyer's file before the deadline; otherwise it can only return to the buyer, automatically. Before proposing, this plugin re-derives the escrow address and checks that the live payment request pays exactly that address and amount. Input: quote_id (valid 5 minutes). Use the wallet_id of the quote's buyer wallet. PayBox shows the payee and amount for approval. After approval, poll get_request until it finishes; never call this tool twice for one quote. Then call keyframe_verify with the paid response.",
+      "description": "Creates the payment for a quote as one PayBox approval: an x402 payment of the quoted USDC on Base, gasless for the payer. The money goes to the order's escrow address, never to Keyframe directly. It can pay the studio only if the studio publishes the key to the buyer's file before the deadline; otherwise it can only return to the buyer, automatically. Before proposing, this plugin checks that the quote is still exactly the deal that was reviewed, re-derives the escrow address and checks that the live payment request pays exactly that address and amount. Input: quote_id, buyer and terms_hash exactly as in keyframe_quote's next.input (valid 5 minutes). Use the wallet_id of that buyer wallet. PayBox shows the payee and amount for approval; compare the whole address. After approval, poll get_request until it finishes; never call this tool twice for one quote. Then call keyframe_verify with the paid response.",
       "annotations": {
         "readOnlyHint": false,
         "destructiveHint": false,
@@ -1092,10 +1092,22 @@
             "type": "string",
             "pattern": "^q_[1-9A-HJ-NP-Za-km-z]{22}$",
             "description": "Keyframe quote id (q_ + 22 base58 characters), from keyframe_quote"
+          },
+          "buyer": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{40}$",
+            "description": "the buyer wallet address from keyframe_quote's next.input (the wallet that pays; refunds can only go there)"
+          },
+          "terms_hash": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{64}$",
+            "description": "terms_hash from keyframe_quote's next.input: the deal checked there; payment is refused if the deal changed"
           }
         },
         "required": [
-          "quote_id"
+          "quote_id",
+          "buyer",
+          "terms_hash"
         ],
         "additionalProperties": false
       },
@@ -1221,7 +1233,7 @@
     {
       "name": "keyframe_commission_direct",
       "title": "Keyframe · 2b. pay by direct transfer (1 approval, needs ETH gas)",
-      "description": "Payment route for wallets that cannot pay by x402 (for example EIP-7702-delegated wallets). Use only when keyframe_quote returns route.kind = 'direct'. Proposes one Base transaction: USDC.transfer(escrow address, exact price). PayBox's window shows the USDC contract as 'to'; the escrow address and amount are inside the data. Needs a little ETH on Base for gas. Use the wallet_id of the quote's buyer wallet. Poll get_request to success, then call keyframe_verify with mode funding, quote_id and tx_hash.",
+      "description": "Payment route for wallets that cannot pay by x402 (for example EIP-7702-delegated wallets), used when keyframe_quote returns route.kind = 'direct' or when the user wants the payee fixed in the transaction itself. Proposes one Base transaction: USDC.transfer(escrow address, exact price). PayBox's window shows the USDC contract as 'to'; the escrow address and amount are inside the data. Needs a little ETH on Base for gas. Input: quote_id, buyer and terms_hash exactly as in keyframe_quote's next.input; the same deal checks as keyframe_commission. Use the wallet_id of that buyer wallet. Poll get_request to success, then call keyframe_verify with mode funding, quote_id and tx_hash.",
       "annotations": {
         "readOnlyHint": false,
         "destructiveHint": false,
@@ -1236,10 +1248,22 @@
             "type": "string",
             "pattern": "^q_[1-9A-HJ-NP-Za-km-z]{22}$",
             "description": "Keyframe quote id (q_ + 22 base58 characters), from keyframe_quote"
+          },
+          "buyer": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{40}$",
+            "description": "the buyer wallet address from keyframe_quote's next.input (the wallet that pays; refunds can only go there)"
+          },
+          "terms_hash": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{64}$",
+            "description": "terms_hash from keyframe_quote's next.input: the deal checked there; payment is refused if the deal changed"
           }
         },
         "required": [
-          "quote_id"
+          "quote_id",
+          "buyer",
+          "terms_hash"
         ],
         "additionalProperties": false
       },
@@ -1309,7 +1333,7 @@
     {
       "name": "keyframe_status",
       "title": "Keyframe · 3. check an order (free)",
-      "description": "Order progress: preview ready, sealed (paid into escrow), rendering (percent and time left), key published (delivered and paid), returned (refunded) or void. Accepts quote_id (this also finalizes a quote whose preview was pending) or order_id (+ access_token for private orders). Waits up to wait_s seconds (max 6) for a change. Free; moves no money. While rendering, call again after poll_after_s. When the state is KEY PUBLISHED or RETURNED, call keyframe_verify.",
+      "description": "Order progress: preview ready, sealed (paid into escrow), rendering (percent and time left), key published (delivered and paid), returned (refunded) or void. Accepts quote_id (this also finalizes a quote whose preview was pending; pass buyer to check the deal refunds to that wallet) or order_id (+ access_token for private orders). Waits up to wait_s seconds (max 6) for a change. Free; moves no money. While rendering, call again after poll_after_s. When the state is KEY PUBLISHED or RETURNED, call keyframe_verify.",
       "annotations": {
         "readOnlyHint": true,
         "destructiveHint": false,
@@ -1334,6 +1358,11 @@
             "type": "string",
             "pattern": "^[A-Za-z0-9_-]{43}$",
             "description": "access_token from the paid response or keyframe_orders (private order details)"
+          },
+          "buyer": {
+            "description": "the buyer wallet address the quote was requested for; checked against the deal (refunds can only go there)",
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{40}$"
           },
           "wait_s": {
             "default": 0,
@@ -2911,7 +2940,7 @@
     {
       "name": "keyframe_review",
       "title": "Keyframe · Studio review: accept, changes or reject",
-      "description": "For Studio orders whose watermarked preview is ready. decision: accept (pay the designer now), changes (one revision) or reject (refund to the buyer, minus the kill fee in the deal, if any). The first call returns an EIP-712 message. Confirm with the user, sign it with request_wallet_sign (no gas; moves no money by itself), then call again with the signature and sig_deadline. This plugin only passes on messages for Keyframe's own escrow contract. Doing nothing until the review window ends counts as accept.",
+      "description": "For Studio orders whose watermarked preview is ready. decision: accept (pay the designer now), changes (ask for the one included revision) or reject (refund to the buyer, minus the kill fee in the deal, if any). The first call returns an EIP-712 message. Confirm with the user, sign it with request_wallet_sign (no gas; moves no money by itself), then call again with the signature and sig_deadline. This plugin only passes on messages for Keyframe's own escrow contract and builds the change request itself. Without a change request, doing nothing until the review window ends counts as accept. After a change request nothing is released on silence: one revision may be delivered, and only the buyer's explicit accept releases payment, possible until the order's changes.accept_by (after the on-chain review window Keyframe verifies the signed accept itself; a reject then is a full refund); otherwise the USDC returns to the buyer in full after the review window plus 3 days.",
       "annotations": {
         "readOnlyHint": false,
         "destructiveHint": true,

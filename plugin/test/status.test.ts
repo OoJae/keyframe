@@ -34,7 +34,7 @@ describe("keyframe_status", () => {
       rpcs_answered: 2,
       consistent: true,
     });
-    expect(r.text).toMatch(/Keyframe reports: rendering 60%, about 20 s left/);
+    expect(r.text).toMatch(/Keyframe reports: "rendering" 60%, about 20 s left/);
     expect(s.next.tool).toBe("keyframe_status");
     expect(s.poll_after_s).toBe(5);
   });

@@ -6,7 +6,7 @@ import { type Quote, QuoteSchema } from "../protocol/index.js";
 import type { Config } from "./config.js";
 import { type Budget, describeNetError, fetchBounded, NetError, parseJson } from "./net.js";
 import { ToolError } from "./result.js";
-import { clean } from "./text.js";
+import { clean, quoted } from "./text.js";
 
 export const API_CAP_MS = 3_500;
 const MAX_API_BYTES = 256 * 1024;
@@ -50,12 +50,27 @@ export function backendMessage(json: unknown): string {
   if (typeof json !== "object" || json === null) return "";
   const j = json as { message?: unknown; error?: unknown };
   const text = typeof j.message === "string" ? j.message : typeof j.error === "string" ? j.error : "";
-  return text ? ` Keyframe said: "${clean(text, 240)}".` : "";
+  return text ? ` Keyframe said: ${quoted(text, 240)}.` : "";
+}
+
+/** Seconds to wait from a 429/503 (Retry-After header, else the body's retry_after_s), clamped to 1..3600. */
+export function retryAfterS(res: ApiResponse): number | null {
+  const header = res.headers.get("retry-after")?.trim() ?? "";
+  const body = (res.json as { retry_after_s?: unknown } | null)?.retry_after_s;
+  const n = /^[0-9]{1,6}$/.test(header) ? Number(header) : typeof body === "number" ? body : Number.NaN;
+  return Number.isSafeInteger(n) && n >= 0 ? Math.min(3600, Math.max(1, n)) : null;
+}
+
+/** HTTP 429 (processed: false): the request was not processed; nothing happened, so it can simply be retried. */
+export function rateLimitedText(res: ApiResponse): string {
+  const n = retryAfterS(res);
+  return `Keyframe rate-limited this request (HTTP 429), so it was not processed; retry it ${n === null ? "in a little while" : `after ${n} s`}`;
 }
 
 /** Shared mapping of non-2xx API statuses to user-facing errors. */
 export function apiFailure(res: ApiResponse, tail: string): ToolError {
   const said = backendMessage(res.json);
+  if (res.status === 429) return new ToolError(`${rateLimitedText(res)}.${said} ${tail}`);
   switch (res.status) {
     case 400:
     case 422:
@@ -66,12 +81,11 @@ export function apiFailure(res: ApiResponse, tail: string): ToolError {
     case 404:
       return new ToolError(`Keyframe has no record of that id (HTTP 404).${said} ${tail}`);
     case 409:
-      return new ToolError(`Keyframe reports a conflict (HTTP 409), usually "already paid".${said} ${tail}`);
+      return new ToolError(`Keyframe reports a conflict with the order's current state (HTTP 409).${said} ${tail}`);
     case 410:
       return new ToolError(`That quote has expired (HTTP 410); request a new quote.${said} ${tail}`);
     case 451:
       return new ToolError(`Keyframe cannot serve this wallet (HTTP 451, compliance screening).${said} ${tail}`);
-    case 429:
     case 503:
       return new ToolError(
         `Keyframe is busy or at capacity (HTTP ${res.status}); try again in a few minutes.${said} ${tail}`,
@@ -85,14 +99,15 @@ export function parseQuote(json: unknown, tail: string): Quote {
   const r = QuoteSchema.safeParse(json);
   if (!r.success) {
     const issue = r.error.issues[0];
-    const where = issue ? clean(issue.path.join("."), 60) || "(root)" : "(root)";
+    const path = issue ? clean(issue.path.join("."), 60) : "";
+    const where = path ? quoted(path, 60) : "(root)";
     throw new ToolError(`Keyframe returned a quote that does not match the frozen v1 format (at ${where}). ${tail}`);
   }
   return r.data;
 }
 
 export async function getQuote(cfg: Config, budget: Budget, quoteId: string, tail: string): Promise<Quote> {
-  if (!QUOTE_ID_RE.test(quoteId)) throw new ToolError(`"${clean(quoteId, 40)}" is not a Keyframe quote id. ${tail}`);
+  if (!QUOTE_ID_RE.test(quoteId)) throw new ToolError(`${quoted(quoteId, 40)} is not a Keyframe quote id. ${tail}`);
   const res = await apiRequest(cfg, budget, `/v1/quotes/${quoteId}`, {}, "Fetching the quote from Keyframe's API");
   if (res.status !== 200) throw apiFailure(res, tail);
   const quote = parseQuote(res.json, tail);

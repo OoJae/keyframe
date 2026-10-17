@@ -10,7 +10,7 @@ import { type Budget, describeNetError, fetchBounded, NetError } from "./net.js"
 const STILL_CAP_MS = 3_000;
 const MAX_STILL_BYTES = 3 * 1024 * 1024;
 
-function allowedOrigin(cfg: Config, url: string): boolean {
+export function allowedOrigin(cfg: Config, url: string): boolean {
   try {
     const u = new URL(url);
     if (u.protocol !== "https:" || u.username || u.password || (u.port !== "" && u.port !== "443")) return false;
@@ -19,6 +19,15 @@ function allowedOrigin(cfg: Config, url: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * A preview link from the backend, only if it is a plain https URL on Keyframe's own file or API host (printable
+ * ASCII, no spaces, at most 600 characters); anything else is never shown, so it cannot carry instructions.
+ */
+export function keyframeUrl(cfg: Config, url: string | null): string | null {
+  if (url === null || url.length > 600 || !/^[\x21-\x7e]+$/.test(url)) return null;
+  return allowedOrigin(cfg, url) ? url : null;
 }
 
 export async function checkStill(

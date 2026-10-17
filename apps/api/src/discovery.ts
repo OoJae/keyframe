@@ -32,7 +32,15 @@ export function llmsTxt(cfg: Config): string {
    factory.release; verify everything from chain + public storage (manifest hash, chunk hashes, AES-256-GCM).
 
 Refusals before settlement (409 wrong payer or already paid, 410 expired, 425 still rendering, 451 sanctioned,
-503 at capacity) never charge.
+503 at capacity) never charge and say "charged": false. If a settlement already started and its outcome is not
+known yet the answer is 409 settlement_in_progress with "charged": "unknown": retry the SAME request (same payment
+header) or poll GET /v1/quotes/{quote_id}; never sign a second payment. Draft quotes are not payable (payable:
+false): their escrow and terms are provisional. The paid body's access_token and k_buyer are returned only right
+after settlement; recover them later with SIWE (/v1/auth/siwe/challenge, /verify). Send the access_token as
+"Authorization: Bearer …" (or ?token=). Costly endpoints are rate limited per client (429 + Retry-After).
+
+Studio: after a "changes" request payment is never released on silence. One revision may be delivered; the
+studio is paid only on your explicit accept, and without one you are refunded after the review end plus grace.
 
 ## Formats
 ${formats}
@@ -114,20 +122,30 @@ export function openApi(cfg: Config) {
             { name: "X-PAYMENT", in: "header", schema: { type: "string" }, description: "x402 v1 payment" },
           ],
           responses: {
-            "200": ok("Paid", ref("PaidResponse")),
+            "200": ok(
+              "Paid (a later replay of the same header has access_token/k_buyer null: use SIWE)",
+              ref("PaidResponse"),
+            ),
             "402": { description: "Payment required (x402 PAYMENT-REQUIRED header, body {})" },
-            "409": err("Already paid / payer mismatch (not charged)"),
+            "409": err(
+              'Already paid / payer mismatch (charged: false), or settlement_in_progress (charged: "unknown": retry the same request)',
+            ),
             "410": err("Expired or cancelled (not charged)"),
             "425": err("Quote still rendering (not charged)"),
+            "429": err("Rate limited (not processed; retry the same request after Retry-After)"),
             "451": err("Sanctioned payer (not charged)"),
-            "503": err("At capacity or unavailable (not charged)"),
+            "503": err("At capacity or unavailable (not charged), or settlement_recording_delayed (charged: true)"),
           },
         },
       },
       "/v1/orders/{order_id}": {
         get: {
-          summary: "Order status (token = access_token for owner detail)",
-          parameters: [oid, { name: "token", in: "query", schema: { type: "string" } }],
+          summary: "Order status (access_token as Authorization: Bearer, or ?token=, for owner detail)",
+          parameters: [
+            oid,
+            { name: "token", in: "query", schema: { type: "string" } },
+            { name: "Authorization", in: "header", schema: { type: "string" }, description: "Bearer <access_token>" },
+          ],
           responses: { "200": ok("Order"), "401": err("Bad token"), "404": err("Unknown") },
         },
       },
@@ -193,7 +211,11 @@ export function openApi(cfg: Config) {
         Error: {
           type: "object",
           required: ["error"],
-          properties: { error: { type: "string" }, detail: { type: "string" }, charged: { type: "boolean" } },
+          properties: {
+            error: { type: "string" },
+            detail: { type: "string" },
+            charged: { oneOf: [{ type: "boolean" }, { const: "unknown" }] },
+          },
         },
         QuoteRequest: {
           type: "object",

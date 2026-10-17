@@ -18,6 +18,10 @@ export const DISCLOSURES: readonly string[] = [
 
 export const DRAFT_RETRY_MS = 3000;
 
+/** Shown on drafts: their terms/escrow are provisional (they change when the quote turns final). */
+export const DRAFT_NOTICE =
+  "Draft: terms, terms_hash and escrow are provisional and change when the quote turns final. Do not pay or send funds to this escrow; wait for status final.";
+
 export type PublicQuoteStatus = "draft" | "final" | "paid" | "expired" | "cancelled";
 
 export function publicStatus(q: QuoteRow, nowS: number): PublicQuoteStatus {
@@ -68,6 +72,9 @@ export function quoteView(q: QuoteRow, cfg: Config, nowS: number) {
     order_url: orderUrl(cfg, q.id),
     order_id: q.order_id,
     provisional: status === "draft",
+    payable: status === "final" && q.status === "final",
+    terms_final: status !== "draft",
+    ...(status === "draft" ? { escrow_status: "provisional_do_not_pay", notice: DRAFT_NOTICE } : {}),
     ...(q.cancel_reason ? { cancel_reason: q.cancel_reason } : {}),
   };
 }

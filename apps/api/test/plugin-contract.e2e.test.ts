@@ -73,6 +73,12 @@ describe.runIf(anvilAvailable() && pluginReady)("plugin ⇄ API ⇄ contracts (f
     }) as typeof fetch;
   }
 
+  /** Payment tool input: quote_id plus the buyer and terms_hash the agent got from keyframe_quote (plugin ≥ fix). */
+  async function commissionInput(h: Awaited<ReturnType<typeof chainHarness>>["h"], quoteId: string) {
+    const q = (await (await h.request(`/v1/quotes/${quoteId}`)).json()) as Json;
+    return { quote_id: quoteId, buyer: q.buyer, terms_hash: q.terms_hash };
+  }
+
   /** Sign plugin-returned eth_signTypedData_v4 JSON the way a wallet would. */
   async function signTyped(account: { signTypedData: (a: never) => Promise<string> }, td: Json) {
     const { EIP712Domain: _, ...types } = td.types;
@@ -95,7 +101,7 @@ describe.runIf(anvilAvailable() && pluginReady)("plugin ⇄ API ⇄ contracts (f
     expect(quoted.isError, quoted.content[0]?.text).toBeFalsy();
     expect(failures(quoted)).toEqual([]);
     const quoteId = JSON.stringify(quoted.structuredContent).match(/q_[1-9A-HJ-NP-Za-km-z]{22}/)?.[0] as string;
-    const commission = await call("keyframe_commission", { quote_id: quoteId });
+    const commission = await call("keyframe_commission", await commissionInput(h, quoteId));
     expect(commission.isError, commission.content[0]?.text).toBeFalsy();
     const paid = await (await h.pay(quoteId, await h.paymentHeaders(quoteId))).json();
     await h.drain();
@@ -160,7 +166,7 @@ describe.runIf(anvilAvailable() && pluginReady)("plugin ⇄ API ⇄ contracts (f
     expect(status.isError, status.content[0]?.text).toBeFalsy();
 
     // 3. keyframe_commission: every independent check passes and an x402 proposal is produced
-    const commission = await call("keyframe_commission", { quote_id: quoteId });
+    const commission = await call("keyframe_commission", await commissionInput(h, quoteId));
     expect(commission.isError, commission.content[0]?.text).toBeFalsy();
     const proposal = commission.structuredContent?.["io.paybox/transactionProposal"] as Record<string, unknown>;
     expect(proposal).toBeTruthy();

@@ -1,5 +1,6 @@
 import { newQuoteId, type Spec, SpecSchema, termsToJson } from "@keyframe/protocol";
 import { type Address, getAddress, type Hex } from "viem";
+import { MAX_KILL_FEE_BPS, MAX_REVIEW_WINDOW_S } from "../config.js";
 import type { QuoteRow } from "../db/rows.js";
 import { error, json } from "../http.js";
 import { nowS, type Services } from "../services.js";
@@ -26,7 +27,11 @@ export const JOB_ID = () => `j_${crypto.randomUUID().replace(/-/g, "")}`;
 
 const planError = (p: PlanError) => error(p.status, { error: p.error, detail: p.detail });
 
-export async function createQuote(s: Services, body: unknown): Promise<Response> {
+/**
+ * `client` is the hashed caller bucket (see ratelimit.ts clientKey): Instant renders are capped per client and in
+ * total, and the worker claims them round-robin across clients, so junk quotes cannot starve real buyers.
+ */
+export async function createQuote(s: Services, body: unknown, client = "local"): Promise<Response> {
   const { cfg } = s;
   if (cfg.maintenance) return error(503, { error: "maintenance", detail: "new orders are paused" });
   if (cfg.problems.length > 0 || !cfg.operator || !cfg.secrets.kmaster) {
@@ -48,6 +53,12 @@ export async function createQuote(s: Services, body: unknown): Promise<Response>
   }
   const plan = planQuote(req, cfg, now);
   if (!plan.ok) return planError(plan);
+  if (plan.tier === "instant" && plan.deadlineMinutes * 60 < cfg.minReleaseMarginS) {
+    return error(422, {
+      error: "deadline_too_short",
+      detail: `deadline_minutes must be at least ${Math.ceil(cfg.minReleaseMarginS / 60)} on this deployment`,
+    });
+  }
 
   const buyer = getAddress(req.buyer);
   const buyerLc = buyer.toLowerCase();
@@ -57,6 +68,23 @@ export async function createQuote(s: Services, body: unknown): Promise<Response>
   const screening = await s.sanctions.screen(buyer);
   if (screening === "sanctioned") return error(451, { error: "sanctioned", detail: "this address cannot be served" });
   if (screening === "unavailable") return error(503, { error: "screening_unavailable", detail: "try again later" });
+  if (plan.tier === "instant") {
+    const queue = await s.repo.renderQueue(client);
+    if (queue.owner >= cfg.maxQueuedRendersPerClient) {
+      return error(
+        429,
+        { error: "render_queue_limit", detail: "too many previews rendering for this client; wait for them to finish" },
+        { "Retry-After": "60" },
+      );
+    }
+    if (queue.total >= cfg.maxQueuedRenders) {
+      return error(
+        503,
+        { error: "render_queue_full", detail: "the render queue is full; try again shortly" },
+        { "Retry-After": "60" },
+      );
+    }
+  }
 
   const quoteId = newQuoteId();
   const keys = await deriveQuoteKeys(cfg.secrets.kmaster, quoteId, plan.delivery === "private");
@@ -89,6 +117,9 @@ export async function createQuote(s: Services, body: unknown): Promise<Response>
     },
     cfg,
   );
+  if (sealed.terms.reviewWindow > MAX_REVIEW_WINDOW_S || sealed.terms.killFeeBps > MAX_KILL_FEE_BPS) {
+    return error(503, { error: "server_misconfigured", detail: "studio terms are outside the factory's bounds" });
+  }
 
   const row: QuoteRow = {
     id: quoteId,
@@ -121,6 +152,7 @@ export async function createQuote(s: Services, body: unknown): Promise<Response>
     created_at: now,
     finalized_at: studio ? now : null,
     updated_at: now,
+    client_key: client,
   };
   await s.repo.createQuote(
     row,

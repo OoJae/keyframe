@@ -4,7 +4,7 @@ import { siweChallenge, siweVerify } from "./auth/siwe.js";
 import { CATALOG, formatUsdc } from "./catalog.js";
 import { publicConfig } from "./config.js";
 import { llmsTxt, openApi } from "./discovery.js";
-import { error, json, readJson, safeEqual } from "./http.js";
+import { error, json, readBody, readJson, safeEqual } from "./http.js";
 import {
   ClaimBody,
   cancelStudioOrder,
@@ -27,6 +27,8 @@ import { checkDirect } from "./orders/direct.js";
 import { type Background, orderResource } from "./orders/paid.js";
 import { getOrder, listOrders } from "./orders/status.js";
 import { createQuote, getQuote } from "./quotes/service.js";
+import { clientKey, RATE_RULES, throttle } from "./ratelimit.js";
+import { errorText } from "./redact.js";
 import { reviewChallenge, reviewSubmit } from "./reviews.js";
 import { nowS, type Services } from "./services.js";
 import { IMMUTABLE_CACHE, isPublicKey } from "./storage.js";
@@ -39,7 +41,7 @@ const QUOTE_ID = /^q_[1-9A-HJ-NP-Za-km-z]{22}$/;
 const ORDER_ID = /^o_[1-9A-HJ-NP-Za-km-z]{22}$/;
 const JOB_ID = /^j_[0-9a-f]{32}$/;
 
-type Vars = { services: Services; background: Background };
+type Vars = { services: Services; background: Background; client: string };
 export type AppEnv = { Bindings: object; Variables: Vars };
 
 export interface AppHooks {
@@ -58,11 +60,24 @@ function background(c: { executionCtx: { waitUntil(p: Promise<unknown>): void } 
 }
 
 async function bytesOf(req: Request, max: number): Promise<Uint8Array | Response> {
-  const declared = Number(req.headers.get("content-length") ?? "0");
-  if (declared > max) return error(413, { error: "body_too_large", max });
-  const buf = new Uint8Array(await req.arrayBuffer());
-  if (buf.byteLength > max) return error(413, { error: "body_too_large", max });
-  return buf;
+  const r = await readBody(req, max);
+  return r.ok ? r.bytes : r.response;
+}
+
+const hasPayment = (req: Request) => req.headers.has("payment-signature") || req.headers.has("x-payment");
+
+/** `Authorization: Bearer <access_token>` (kept out of URLs and logs), if present. */
+function bearerOf(req: Request): string | undefined {
+  const auth = req.headers.get("authorization") ?? "";
+  return auth.startsWith("Bearer ") ? auth.slice(7).trim() : undefined;
+}
+
+/** Review bodies may omit access_token when it is sent as a bearer token. */
+function withToken(value: unknown, req: Request): unknown {
+  const bearer = bearerOf(req);
+  if (!bearer || !value || typeof value !== "object" || Array.isArray(value)) return value;
+  const v = value as Record<string, unknown>;
+  return v.access_token === undefined ? { ...v, access_token: bearer } : v;
 }
 
 function stylesView(s: Services, tier?: string, format?: string) {
@@ -116,8 +131,19 @@ export function createApp(hooks: AppHooks) {
   const app = new Hono<AppEnv>();
 
   app.use("*", async (c, next) => {
-    c.set("services", hooks.services(c.env));
+    const s = hooks.services(c.env);
+    c.set("services", s);
     c.set("background", background(c));
+    c.set("client", await clientKey(c.req.raw));
+    if (s.edgeLimiter && c.req.path.startsWith("/v1/")) {
+      const { success } = await s.edgeLimiter.limit({ key: c.var.client }).catch(() => ({ success: true }));
+      if (!success)
+        return error(
+          429,
+          { error: "rate_limited", detail: "too many requests", processed: false },
+          { "Retry-After": "10" },
+        );
+    }
     await next();
   });
 
@@ -154,9 +180,11 @@ export function createApp(hooks: AppHooks) {
   );
 
   app.post("/v1/quotes", async (c) => {
+    const limited = await throttle(c.var.services, c.var.client, RATE_RULES.quotes);
+    if (limited) return limited;
     const body = await readJson(c.req.raw);
     if (!body.ok) return body.response;
-    return createQuote(c.var.services, body.value);
+    return createQuote(c.var.services, body.value, c.var.client);
   });
   app.get("/v1/quotes/:id", (c) => {
     const id = c.req.param("id");
@@ -169,42 +197,61 @@ export function createApp(hooks: AppHooks) {
     const s = c.var.services;
     const q = QUOTE_ID.test(id) ? await s.repo.getQuote(id) : null;
     if (!q) return error(404, { error: "unknown_quote" });
+    const limited = await throttle(s, c.var.client, RATE_RULES.rail);
+    if (limited) return limited;
     const outcome = await checkDirect(s, q, 8_000);
     const fresh = (await s.repo.getQuote(id)) ?? q;
     return json(200, { quote_id: id, rail: "direct", outcome, status: fresh.status, order_id: fresh.order_id });
   });
 
   app.get("/v1/orders", (c) => listOrders(c.var.services, c.req.query("buyer")));
-  app.all("/v1/orders/:id", (c) => {
+  app.all("/v1/orders/:id", async (c) => {
     const id = c.req.param("id");
-    if (QUOTE_ID.test(id)) return orderResource(c.var.services, c.req.raw, id, c.var.background);
+    if (QUOTE_ID.test(id)) {
+      if (hasPayment(c.req.raw)) {
+        const limited = await throttle(c.var.services, c.var.client, RATE_RULES.pay);
+        if (limited) return limited;
+      }
+      return orderResource(c.var.services, c.req.raw, id, c.var.background);
+    }
     if (ORDER_ID.test(id)) {
       if (c.req.method !== "GET" && c.req.method !== "HEAD")
         return error(405, { error: "method_not_allowed" }, { Allow: "GET" });
-      return getOrder(c.var.services, id, c.req.query("token"));
+      // access_token as ?token= or, preferably (kept out of URLs and logs), Authorization: Bearer <token>
+      return getOrder(c.var.services, id, c.req.query("token") ?? bearerOf(c.req.raw));
     }
     return error(404, { error: "unknown_order" });
   });
 
   app.post("/v1/auth/siwe/challenge", async (c) => {
+    const limited = await throttle(c.var.services, c.var.client, RATE_RULES.siwe);
+    if (limited) return limited;
     const body = await readJson(c.req.raw);
     return body.ok ? siweChallenge(c.var.services, body.value) : body.response;
   });
   app.post("/v1/auth/siwe/verify", async (c) => {
+    const limited = await throttle(c.var.services, c.var.client, RATE_RULES.siwe);
+    if (limited) return limited;
     const body = await readJson(c.req.raw);
     return body.ok ? siweVerify(c.var.services, body.value) : body.response;
   });
   app.post("/v1/reviews/:id/challenge", async (c) => {
     const id = c.req.param("id");
     if (!ORDER_ID.test(id)) return error(404, { error: "unknown_order" });
+    const limited = await throttle(c.var.services, c.var.client, RATE_RULES.reviews);
+    if (limited) return limited;
     const body = await readJson(c.req.raw);
-    return body.ok ? reviewChallenge(c.var.services, id, body.value) : body.response;
+    return body.ok ? reviewChallenge(c.var.services, id, withToken(body.value, c.req.raw)) : body.response;
   });
   app.post("/v1/reviews/:id/submit", async (c) => {
     const id = c.req.param("id");
     if (!ORDER_ID.test(id)) return error(404, { error: "unknown_order" });
+    const limited = await throttle(c.var.services, c.var.client, RATE_RULES.reviews);
+    if (limited) return limited;
     const body = await readJson(c.req.raw);
-    return body.ok ? reviewSubmit(c.var.services, id, body.value, c.var.background) : body.response;
+    return body.ok
+      ? reviewSubmit(c.var.services, id, withToken(body.value, c.req.raw), c.var.background)
+      : body.response;
   });
 
   // Public artifact storage (used when FILES_BASE_URL points here, e.g. KV-backed deployments).
@@ -325,6 +372,9 @@ export function createApp(hooks: AppHooks) {
         status: o.status,
         deadline: o.deadline,
         created_at: o.created_at,
+        ...(o.change_requested_at
+          ? { change_requested_at: o.change_requested_at, revision_delivered_at: o.revision_delivered_at ?? null }
+          : {}),
       })),
     });
   });
@@ -347,7 +397,7 @@ export function createApp(hooks: AppHooks) {
 
   app.notFound(() => error(404, { error: "not_found" }));
   app.onError((err, c) => {
-    c.var.services?.log.error("unhandled", { name: err.name, message: err.message.slice(0, 200), path: c.req.path });
+    c.var.services?.log.error("unhandled", { name: err.name, message: errorText(err, 200), path: c.req.path });
     return error(500, { error: "internal_error" });
   });
   return app;

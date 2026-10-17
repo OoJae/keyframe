@@ -117,6 +117,8 @@ export type QuoteRecord = {
   /** 402 payee/amount actually served (defaults: quote.escrow / terms.amount). */
   payTo?: Address;
   amount?: string;
+  /** Studio change request as the API's order view reports it (`changes`), set by a "changes" submit. */
+  changes?: Record<string, unknown>;
 };
 
 export type Hooks = {
@@ -513,6 +515,7 @@ export class World {
         factory: FACTORY,
         progress: { stage: "rendering", percent: 60, eta_s: 20 },
         spec: rec.quote.spec,
+        ...(rec.changes ? { changes: rec.changes } : {}),
       });
     }
     if (p === "/v1/orders" && req.method === "GET") {
@@ -563,6 +566,18 @@ export class World {
     if (m) {
       const rec = this.byOrder.get(m[1] as string);
       if (!rec || data.access_token !== rec.accessToken) return json(401, { error: "token" });
+      if (m[2] === "submit" && data.decision === "changes") {
+        // Like the API: off-chain, accept_by = review end + 3 days - 12 min.
+        const o = this.orders.get(rec.termsHash);
+        const acceptBy = Number(o?.deliveredAt ?? 0n) + rec.terms.reviewWindow + 3 * 86_400 - 720;
+        rec.changes = {
+          requested_at: now(),
+          accept_by: acceptBy,
+          revision: null,
+          policy: "After a change request Keyframe never releases payment on silence.",
+        };
+        return json(200, { tx: null, status: "changes_requested", accept_by: acceptBy });
+      }
       if (m[2] === "submit")
         return json(200, { tx: keccak256(toHex(`relay:${rec.orderId}:${String(data.decision)}`)), status: "relayed" });
       const deadline = now() + 900;

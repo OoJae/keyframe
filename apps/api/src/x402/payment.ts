@@ -1,8 +1,8 @@
 import { getAddress, type Hex } from "viem";
 
 // Decoding of the client's payment header: v2 `PAYMENT-SIGNATURE` or v1 `X-PAYMENT`, both base64(JSON) of a
-// PaymentPayload carrying an EIP-3009 authorization. Only shape is checked here; signatures are verified by the
-// x402 exact verifier.
+// PaymentPayload carrying an EIP-3009 authorization. Only shape is checked here (strictly: no Permit2 or other
+// payload variants); signatures are verified by the x402 exact verifier.
 
 export interface Authorization {
   from: string;
@@ -23,6 +23,8 @@ export interface DecodedPayment {
   /** Lowercase payer and nonce: the exactly-once key. */
   fromLc: string;
   nonceLc: string;
+  /** EIP-3009 validBefore (unix s, capped to a safe integer). */
+  validBefore: number;
 }
 
 export type PaymentHeader =
@@ -49,6 +51,11 @@ export function utf8ToBase64(value: string): string {
   return btoa(bin);
 }
 
+const safeSeconds = (v: string): number => {
+  const n = BigInt(v);
+  return n > BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER : Number(n);
+};
+
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 export function readPaymentHeader(headers: Headers): PaymentHeader {
@@ -73,6 +80,15 @@ export function readPaymentHeader(headers: Headers): PaymentHeader {
   const inner = payload.payload;
   if (!isRecord(inner) || !isRecord(inner.authorization) || typeof inner.signature !== "string") {
     return { kind: "invalid", reason: "only exact EIP-3009 authorizations are accepted" };
+  }
+  // Exactly {authorization, signature}. The x402 exact verifier switches to Permit2 when `permit2Authorization` is
+  // present, which would verify a different payer than the EIP-3009 block every business check reads.
+  if (Object.keys(inner).some((k) => k !== "authorization" && k !== "signature")) {
+    return { kind: "invalid", reason: "only exact EIP-3009 authorizations are accepted (no other payload fields)" };
+  }
+  const authKeys = ["from", "to", "value", "validAfter", "validBefore", "nonce"];
+  if (Object.keys(inner.authorization).some((k) => !authKeys.includes(k))) {
+    return { kind: "invalid", reason: "malformed EIP-3009 authorization" };
   }
   const a = inner.authorization;
   const ok =
@@ -101,6 +117,7 @@ export function readPaymentHeader(headers: Headers): PaymentHeader {
       signature: inner.signature as Hex,
       fromLc: getAddress(authorization.from).toLowerCase(),
       nonceLc: authorization.nonce.toLowerCase(),
+      validBefore: safeSeconds(authorization.validBefore),
     },
   };
 }

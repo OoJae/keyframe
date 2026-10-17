@@ -7,12 +7,12 @@ import { type Quote, saltOf, specHash, type Terms, termsFromJson } from "../prot
 import { classifyEscrowCode, codeRead, type EscrowCode, orderRead, statusName, usdcRead } from "./chain.js";
 import { type Check, fail, failed, pass, skip, warn } from "./checks.js";
 import { type Config, findFactory } from "./config.js";
-import { allowlistChecks, type Derived, derive, MAX_LOCK_S, shapeChecks, ZERO32 } from "./deal.js";
+import { allowlistChecks, type Derived, dealBoundsCheck, derive, MAX_LOCK_S, shapeChecks, ZERO32 } from "./deal.js";
 import { fetchManifest, ipfsCidOf, sourcesOf } from "./delivery.js";
 import type { Budget } from "./net.js";
 import { type Probe, probe402 } from "./probe.js";
 import { crossRead } from "./rpc.js";
-import { checkStill } from "./still.js";
+import { checkStill, keyframeUrl } from "./still.js";
 import { approxDuration, shortAddr, usdc, utc } from "./text.js";
 import { chooseRoute, type Route, walletReads, walletView } from "./wallet.js";
 
@@ -35,18 +35,34 @@ export type QuoteReview = {
   probe: Probe | null;
   route: Route | null;
   escrow: EscrowState;
+  /** True when the deal's buyer was compared with a wallet the agent supplied (not only with the quote's claim). */
+  buyerChecked: boolean;
+  /** Preview links that may be shown: only plain URLs on Keyframe's own hosts (else null). */
+  preview: { still: string | null; video: string | null };
 };
+
+/** What the caller already knows independently of the backend: the user's wallet and the deal it reviewed. */
+export type Expected = { buyer?: Address; termsHash?: Hex };
 
 const lc = (s: string) => s.toLowerCase();
 
 /** Checks that need neither network nor RPC. `now` is unix seconds. */
-export async function localQuoteChecks(cfg: Config, quote: Quote, now: number, expectBuyer?: Address) {
+export async function localQuoteChecks(cfg: Config, quote: Quote, now: number, expected: Expected = {}) {
   const t = termsFromJson(quote.terms);
   const checks: Check[] = [];
   const entry = findFactory(cfg, quote.factory);
   const derived = derive(t, quote.factory, entry?.vaultImpl);
+  const expectBuyer = expected.buyer;
 
-  if (quote.status === "final") checks.push(pass("quote_final", "the quote is final"));
+  // The API keeps a quote "final" while a payment for it settles, with payable: false (ADR-019): never pay twice.
+  if (quote.status === "final" && (quote as { payable?: unknown }).payable === false) {
+    checks.push(
+      fail(
+        "quote_final",
+        "Keyframe reports a payment for this quote is already being settled (payable: false): do not pay again; poll keyframe_status",
+      ),
+    );
+  } else if (quote.status === "final") checks.push(pass("quote_final", "the quote is final"));
   else if (quote.status === "draft")
     checks.push(skip("quote_final", "the key-frame preview is still rendering (draft quote)"));
   else checks.push(fail("quote_final", `the quote is ${quote.status}; it cannot be paid`));
@@ -75,6 +91,18 @@ export async function localQuoteChecks(cfg: Config, quote: Quote, now: number, e
       ? pass("terms_hash", `deal hash recomputed locally: ${derived.termsHash}`)
       : fail("terms_hash", "the quote's terms_hash does not match the hash of its own terms"),
   );
+  // H1: a payment must be for exactly the deal the user reviewed. The backend serves the quote again at payment
+  // time; any change of price, deadline, refund wallet or brief changes the locally derived hash.
+  if (expected.termsHash !== undefined) {
+    checks.push(
+      lc(derived.termsHash) === lc(expected.termsHash)
+        ? pass("same_deal", "this is exactly the deal that was reviewed (same terms_hash)")
+        : fail(
+            "same_deal",
+            `the deal changed since it was reviewed: its hash is now ${derived.termsHash}, not ${lc(expected.termsHash)}; the price, deadline, refund wallet or brief may differ. Review it again with keyframe_status (quote_id and buyer)`,
+          ),
+    );
+  }
   checks.push(
     isAddressEqual(derived.escrow, quote.escrow)
       ? pass("escrow_address", `escrow address recomputed locally (CREATE2 from the deal): ${derived.escrow}`)
@@ -83,7 +111,7 @@ export async function localQuoteChecks(cfg: Config, quote: Quote, now: number, e
           `the quote's escrow ${quote.escrow} is NOT the address derived from its terms (${derived.escrow})`,
         ),
   );
-  checks.push(...shapeChecks(t), ...allowlistChecks(cfg, t, quote.factory, "pay"));
+  checks.push(...shapeChecks(t), dealBoundsCheck(t), ...allowlistChecks(cfg, t, quote.factory, "pay"));
 
   checks.push(
     lc(saltOf(quote.quote_id)) === lc(t.salt)
@@ -151,12 +179,25 @@ export async function reviewQuote(
   cfg: Config,
   budget: Budget,
   quote: Quote,
-  opts: { now: number; expectBuyer?: Address; live: boolean; wallet: boolean },
+  opts: { now: number; expectBuyer?: Address; expectTermsHash?: Hex; live: boolean; wallet: boolean },
 ): Promise<QuoteReview> {
-  const { terms: t, derived, checks } = await localQuoteChecks(cfg, quote, opts.now, opts.expectBuyer);
+  const {
+    terms: t,
+    derived,
+    checks,
+  } = await localQuoteChecks(cfg, quote, opts.now, {
+    buyer: opts.expectBuyer,
+    termsHash: opts.expectTermsHash,
+  });
   const escrow: EscrowState = { code: null, balance: null, status: null, consistent: true };
+  const buyerChecked = opts.expectBuyer !== undefined;
+  const preview = {
+    still: keyframeUrl(cfg, quote.preview.still_url),
+    video: keyframeUrl(cfg, quote.preview.video_url),
+  };
+  const base = { quote, terms: t, derived, checks, escrow, buyerChecked, preview };
   if (!opts.live || quote.status !== "final") {
-    return { quote, terms: t, derived, checks, fatal: failed(checks), probe: null, route: null, escrow };
+    return { ...base, fatal: failed(checks), probe: null, route: null };
   }
 
   const vaultImpl = derived.derivation.vault_impl;
@@ -223,7 +264,7 @@ export async function reviewQuote(
   }
 
   const route = opts.wallet ? chooseRoute(cfg, walletView(rpc, t.buyer, t.amount), t.amount) : null;
-  return { quote, terms: t, derived, checks, fatal: failed(checks), probe, route, escrow };
+  return { ...base, fatal: failed(checks), probe, route };
 }
 
 const ASPECT_SIZE: Record<string, [number, number]> = {

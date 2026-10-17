@@ -9,8 +9,8 @@ import { checkLines, failed } from "../core/checks.js";
 import { loadConfig } from "../core/config.js";
 import { RELEASE_GRACE_S, termsJson } from "../core/deal.js";
 import { Budget } from "../core/net.js";
-import { snapshot } from "../core/onchain.js";
-import { resolveOrder } from "../core/resolve.js";
+import { crossChecked, snapshot } from "../core/onchain.js";
+import { changesOf, resolveOrder } from "../core/resolve.js";
 import { guarded, NOTHING_PROPOSED, ToolError, type ToolResult } from "../core/result.js";
 import { nowSeconds, shortAddr, usdc, utc } from "../core/text.js";
 import { proposeEvm } from "../paybox.js";
@@ -65,6 +65,19 @@ export const refundTool = defineTool({
       if (!o || s.balance === undefined) {
         throw new ToolError(`Could not read the escrow on Base to check that this is allowed now. ${NOTHING_PROPOSED}`);
       }
+      // L4: eligibility is decided only on two agreeing Base RPCs, never on the first answer alone.
+      if (!crossChecked(s, extra)) {
+        throw new ToolError(
+          `Refusing to propose: ${s.rpc.responded} of ${s.rpc.configured} Base RPCs answered${s.view.consistent ? "" : " and they DISAGREE"}; this plugin proposes a refund, sweep or reject only when at least 2 independent Base RPCs agree on the escrow's state. Try again in a minute. ${NOTHING_PROPOSED}`,
+        );
+      }
+      // The on-chain record of a registered deal must be these terms' (Keyframe's order_id -> terms mapping is
+      // not trusted on its own word).
+      if (o.status !== Status.None && (!isAddressEqual(o.buyer, t.buyer) || Number(o.deadline) !== t.deadline)) {
+        throw new ToolError(
+          `The on-chain record of this deal names a different buyer or deadline than these terms, so they do not describe this order. ${NOTHING_PROPOSED}`,
+        );
+      }
       const now = nowSeconds();
       const where = `escrow ${shortAddr(r.escrow)} (${statusName(o.status)}, holds ${usdc(s.balance)} USDC)`;
       let data: Hex;
@@ -110,8 +123,17 @@ export const refundTool = defineTool({
           );
         }
         const closesAt = Number(o.deliveredAt) + t.reviewWindow;
-        if (now >= closesAt - MARGIN_S)
-          throw new ToolError(`The review window closed at ${utc(closesAt)}. ${NOTHING_PROPOSED}`);
+        if (now >= closesAt - MARGIN_S) {
+          // After a change request Keyframe still takes a signed reject (answered with a full-refund cancel).
+          const changes = changesOf(r.order, closesAt);
+          const later =
+            changes?.acceptBy && now < changes.acceptBy
+              ? ` After the change request a reject is still possible through keyframe_review until ${utc(changes.acceptBy)}: Keyframe then voids the order and the full amount returns to the buyer.`
+              : "";
+          throw new ToolError(
+            `The on-chain review window closed at ${utc(closesAt)}, so decide(T, false) would revert.${later} ${NOTHING_PROPOSED}`,
+          );
+        }
         data = encodeFunctionData({ abi: keyframeFactoryAbi, functionName: "decide", args: [tuple(t), false] });
         const fee = (t.amount * BigInt(t.killFeeBps)) / 10_000n;
         what = `decide(T, reject): the designer keeps the agreed kill fee of ${usdc(fee)} USDC, and the rest returns to the buyer ${t.buyer}. It must be sent from that buyer wallet`;

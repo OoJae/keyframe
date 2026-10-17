@@ -1,7 +1,7 @@
 import { escrowOf, hashTerms, keyframeFactoryAbi, Status, type Terms, USDC } from "@keyframe/protocol";
 import type { FacilitatorEvmSigner } from "@x402/evm";
 import { type Address, decodeFunctionData, type Hex, keccak256, toHex } from "viem";
-import type { ChainReader, OrderView } from "../../src/chain.js";
+import type { ChainReader, OrderEvent, OrderView, TokenTransfer } from "../../src/chain.js";
 import type { ReceiptResult, RelayerClient, RelayRequest, RelayResult } from "../../src/relayer/types.js";
 import type { StorageAdapter, StoredObject } from "../../src/storage.js";
 
@@ -29,10 +29,19 @@ const emptyView = (): OrderView => ({
 type TupleTerms = Omit<Terms, "dueAt" | "deadline"> & { dueAt: bigint; deadline: bigint };
 const fromTuple = (t: TupleTerms): Terms => ({ ...t, dueAt: Number(t.dueAt), deadline: Number(t.deadline) });
 
+/** Default sender the fake reports for USDC that reached an escrow without an explicit transfer record. */
+export const UNKNOWN_DEPOSITOR = "0x00000000000000000000000000000000000dE905" as Address;
+
 export class FakeFactory {
   readonly views = new Map<string, OrderView>();
   readonly balances = new Map<string, bigint>();
   readonly paidToSeller = new Map<string, bigint>();
+  /** USDC Transfer logs into an escrow (lowercase); when absent the balance is reported as one unknown deposit. */
+  readonly transfers = new Map<string, TokenTransfer[]>();
+  /** EIP-3009 authorizations executed by fundWithAuthorization ("from:nonce", lowercase). */
+  readonly usedAuthorizations = new Set<string>();
+  /** termsHashes refundExpired cannot clear (e.g. a blacklisted buyer under an older factory). */
+  readonly stuck = new Set<string>();
   readonly factory: Address;
   readonly nowS: () => number;
   constructor(factory: Address, nowS: () => number) {
@@ -57,7 +66,13 @@ export class FakeFactory {
   apply(data: Hex): string | null {
     const call = decodeFunctionData({ abi: keyframeFactoryAbi, data });
     const now = BigInt(this.nowS());
-    if (call.functionName === "refundExpired") return null;
+    if (call.functionName === "refundExpired") {
+      for (const h of this.refundableExpired(Number(call.args[0] as bigint))) {
+        const v = this.view(h);
+        this.set(h, { ...v, status: Status.Refunded, finalAt: now });
+      }
+      return null;
+    }
     const t = fromTuple(call.args[0] as TupleTerms);
     const h = hashTerms(t, this.factory);
     const v = this.view(h);
@@ -65,6 +80,7 @@ export class FakeFactory {
     switch (call.functionName) {
       case "fundWithAuthorization":
         if (v.status !== Status.None) return "AlreadyRegistered()";
+        this.usedAuthorizations.add(`${t.buyer.toLowerCase()}:${String(call.args[3]).toLowerCase()}`);
         this.balances.set(e, (this.balances.get(e) ?? 0n) + t.amount);
         this.set(h, {
           ...v,
@@ -148,6 +164,17 @@ export class FakeFactory {
         return `unsupported ${call.functionName}`;
     }
   }
+
+  /** What refundExpired(maxScan) would refund now (Open past the deadline, not stuck). */
+  refundableExpired(maxScan: number): string[] {
+    const now = BigInt(this.nowS());
+    const out: string[] = [];
+    for (const [h, v] of this.views) {
+      if (out.length >= maxScan) break;
+      if (v.status === Status.Open && now > v.deadline && !this.stuck.has(h)) out.push(h);
+    }
+    return out;
+  }
 }
 
 let txCounter = 0;
@@ -226,6 +253,30 @@ export class StubChain implements ChainReader {
     let n = 0n;
     for (const v of this.factory.views.values()) if (v.status === Status.Open && now > v.deadline) n++;
     return n;
+  }
+  async simulateRefundExpired(_f: Address, maxScan: number) {
+    return BigInt(this.factory.refundableExpired(maxScan).length);
+  }
+  async authorizationState(_token: Address, authorizer: Address, nonce: Hex) {
+    return this.factory.usedAuthorizations.has(`${authorizer.toLowerCase()}:${nonce.toLowerCase()}`);
+  }
+  async transfersTo(_token: Address, to: Address): Promise<TokenTransfer[]> {
+    const e = to.toLowerCase();
+    const recorded = this.factory.transfers.get(e);
+    if (recorded) return recorded;
+    const bal = this.factory.balances.get(e) ?? 0n;
+    return bal > 0n ? [{ from: UNKNOWN_DEPOSITOR, value: bal, tx: `0x${"de".repeat(32)}` as Hex }] : [];
+  }
+  /** Tx of the factory event for T: Opened → 0x0e…; a terminal event → 0xee… while T is in that state. */
+  async eventTx(_f: Address, event: OrderEvent, h: Hex) {
+    if (event === "Opened") return `0x${"0e".repeat(32)}` as Hex;
+    const st: Partial<Record<OrderEvent, number>> = {
+      Released: Status.Released,
+      Refunded: Status.Refunded,
+      Cancelled: Status.Cancelled,
+      Decided: Status.Rejected,
+    };
+    return st[event] === this.factory.view(h).status ? (`0x${"ee".repeat(32)}` as Hex) : null;
   }
   async blockTimestamp() {
     return BigInt(this.factory.nowS());

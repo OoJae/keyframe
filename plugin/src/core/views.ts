@@ -5,10 +5,31 @@ import type { Check } from "./checks.js";
 import { failed } from "./checks.js";
 import type { QuoteReview } from "./quote.js";
 import { etaText, formatTitle } from "./quote.js";
-import { capJson, clean, eth, shortAddr, usdc, utc } from "./text.js";
+import { capJson, chunkAddr, clean, eth, quoted, shortAddr, usdc, utc } from "./text.js";
 import type { Route } from "./wallet.js";
 
 export type NextStep = { tool: string | null; input: Record<string, unknown>; note: string };
+
+/**
+ * The payment tools' input: the quote id plus what binds the payment to the deal reviewed here (H1). The buyer is
+ * the wallet the deal refunds to and terms_hash the locally derived deal hash; a payment tool refuses if the
+ * backend serves anything else.
+ */
+export const payInput = (r: QuoteReview) => ({
+  quote_id: r.quote.quote_id,
+  buyer: r.terms.buyer,
+  terms_hash: r.derived.termsHash,
+});
+
+const inline = (o: Record<string, string>) =>
+  `{${Object.entries(o)
+    .map(([k, v]) => `${k}:${JSON.stringify(v)}`)
+    .join(", ")}}`;
+
+/** The quote is being (or was) paid already: Keyframe's settling flag or the live 402 says so. */
+const alreadyPaying = (r: QuoteReview): boolean =>
+  (r.probe !== null && !r.probe.ok && (r.probe.reason === "paid" || r.probe.reason === "settling")) ||
+  r.checks.some((c) => c.id === "quote_final" && c.status === "fail" && /being settled/.test(c.detail));
 
 export function nextForQuote(r: QuoteReview): NextStep {
   const q = r.quote;
@@ -17,8 +38,15 @@ export function nextForQuote(r: QuoteReview): NextStep {
     const wait = Math.max(1, Math.ceil(q.retry_after_ms / 1000));
     return {
       tool: "keyframe_status",
-      input: { quote_id: q.quote_id, wait_s: 6 },
-      note: `The key-frame preview is rendering. Call keyframe_status with this quote_id in about ${wait} s; it finalizes the quote.`,
+      input: { quote_id: q.quote_id, wait_s: 6, buyer: r.terms.buyer },
+      note: `The key-frame preview is rendering. Call keyframe_status with this quote_id and buyer in about ${wait} s; it finalizes the quote.`,
+    };
+  }
+  if (alreadyPaying(r)) {
+    return {
+      tool: "keyframe_status",
+      input: { quote_id: q.quote_id, wait_s: 6, buyer: r.terms.buyer },
+      note: 'A payment for this quote is already settled or still settling. Do not pay again; poll keyframe_status, then call keyframe_verify with mode "funding".',
     };
   }
   if (q.status !== "final" || r.fatal.length > 0) {
@@ -29,20 +57,20 @@ export function nextForQuote(r: QuoteReview): NextStep {
     return {
       tool: "get_buy_link",
       input: {},
-      note: `Core PayBox tool. ${route.reason}. Then call keyframe_status with quote_id ${q.quote_id} (valid until ${utc(q.quote_expires_at)}) or quote again.`,
+      note: `Core PayBox tool. ${route.reason}. Then call keyframe_status with quote_id ${q.quote_id} and buyer ${r.terms.buyer} (valid until ${utc(q.quote_expires_at)}) or quote again.`,
     };
   }
   if (route?.kind === "direct") {
     return {
       tool: "keyframe_commission_direct",
-      input: { quote_id: q.quote_id },
-      note: `One Base transaction: USDC.transfer(${r.derived.escrow}, ${r.terms.amount}). Use the wallet_id of buyer wallet ${r.terms.buyer}. Needs a little ETH for gas.`,
+      input: payInput(r),
+      note: `One Base transaction: USDC.transfer(${r.derived.escrow}, ${r.terms.amount}). Use the wallet_id of buyer wallet ${r.terms.buyer}. Needs a little ETH for gas. Pass input exactly (buyer and terms_hash bind the payment to this deal).`,
     };
   }
   return {
     tool: "keyframe_commission",
-    input: { quote_id: q.quote_id },
-    note: `Use the wallet_id of buyer wallet ${r.terms.buyer}. PayBox will show payee ${r.derived.escrow} and ${amount} USDC; they must match. After approval poll get_request; never call keyframe_commission twice for one quote.`,
+    input: payInput(r),
+    note: `Use the wallet_id of buyer wallet ${r.terms.buyer}. PayBox will show payee ${chunkAddr(r.derived.escrow)} and ${amount} USDC; compare the whole address. Pass input exactly (buyer and terms_hash bind the payment to this deal). After approval poll get_request; never call keyframe_commission twice for one quote.`,
   };
 }
 
@@ -62,9 +90,9 @@ export function quoteView(r: QuoteReview, summary: string): Record<string, unkno
     deadline: r.terms.deadline,
     deadline_utc: utc(r.terms.deadline),
     preview: {
-      still_url: q.preview.still_url === null ? null : clean(q.preview.still_url, 600),
+      still_url: r.preview.still,
       still_sha256: q.preview.still_sha256?.toLowerCase() ?? null,
-      video_url: q.preview.video_url === null ? null : clean(q.preview.video_url, 600),
+      video_url: r.preview.video,
       frame_ms: q.spec.keyframe?.atMs ?? null,
     },
     escrow: {
@@ -114,7 +142,7 @@ export function quoteCard(r: QuoteReview): string {
   const q = r.quote;
   const t = r.terms;
   const amount = usdc(t.amount);
-  const style = clean(q.spec.style, 32);
+  const style = quoted(q.spec.style, 32);
   const head = `Keyframe quote ${q.quote_id}: ${formatTitle(q.spec.format)} · ${style} style · ${q.spec.aspect} · ${q.spec.durationS} s`;
   if (q.status === "draft") {
     return [
@@ -130,12 +158,20 @@ export function quoteCard(r: QuoteReview): string {
       ? `Price ${amount} USDC on Base · made by hand by Keyframe's designer · delivery by ${utc(t.deadline)}, then ${Math.round(t.reviewWindow / 3600)} h to review (miss the delivery deadline → full refund, automatic)`
       : `Price ${amount} USDC on Base · usually ready in ${etaText(q.eta_s)} · deadline ${utc(t.deadline)} (miss it → full refund, automatic)`,
   );
-  if (q.preview.still_url) lines.push(`Key frame preview (watermarked): ${clean(q.preview.still_url, 300)}`);
+  if (studio) {
+    const fee = usdc((t.amount * BigInt(t.killFeeBps)) / 10_000n);
+    lines.push(
+      `Review after delivery: accept, ask for one revision, or reject (the designer keeps the agreed kill fee of ${fee} USDC, the rest returns to you). With no change request, silence until the review window ends counts as accept; after a change request, Keyframe releases payment only on your explicit accept.`,
+    );
+  }
+  // L2: only a plain link on Keyframe's own hosts, and quoted as data.
+  if (r.preview.still) lines.push(`Key frame preview (watermarked): ${quoted(r.preview.still, 600)}`);
   const empty = r.escrow.code === "none" ? " Nothing is deployed there yet." : "";
   lines.push(
     `Sealed envelope: ${shortAddr(r.derived.escrow)} (full: ${r.derived.escrow}).${empty} The address is computed from this`,
     `deal, so the money can pay the studio only if the key to your file is published before the deadline; otherwise it can`,
     `only come back to you.`,
+    `Refunds can only go to the buyer wallet ${t.buyer}${r.buyerChecked ? " (the wallet this quote was requested for)" : "; pass buyer to keyframe_status to check that it is yours"}.`,
   );
   const marks = [
     `address recomputed ${passed(r.checks, "escrow_address") ? "✓" : "✗"}`,
@@ -146,6 +182,8 @@ export function quoteCard(r: QuoteReview): string {
   const bad = failed(r.checks);
   if (bad.length > 0) {
     lines.push(`NOT PAYABLE. Failed: ${bad.map((c) => `${c.id} (${c.detail})`).join("; ")}`);
+    const after = nextForQuote(r);
+    if (after.tool) lines.push(`Next: ${after.tool} (${after.note})`);
     return lines.join("\n");
   }
   const route = routeLine(r.route);
@@ -153,11 +191,11 @@ export function quoteCard(r: QuoteReview): string {
   const next = nextForQuote(r);
   if (next.tool === "keyframe_commission") {
     lines.push(
-      `Next: keyframe_commission {quote_id:"${q.quote_id}"}. PayBox will show payee ${shortAddr(r.derived.escrow)} and ${amount} USDC; they must match.`,
+      `Next: keyframe_commission ${inline(payInput(r))}. PayBox will show payee ${chunkAddr(r.derived.escrow)} and ${amount} USDC; compare the whole address, not only its ends. (keyframe_commission_direct with the same input instead fixes the payee inside the transaction itself; it needs a little ETH for gas.)`,
     );
   } else if (next.tool === "keyframe_commission_direct") {
     lines.push(
-      `Next: keyframe_commission_direct {quote_id:"${q.quote_id}"}. PayBox will show "to" = the USDC contract, with the envelope ${shortAddr(r.derived.escrow)} and ${amount} USDC inside the data.`,
+      `Next: keyframe_commission_direct ${inline(payInput(r))}. PayBox will show "to" = the USDC contract, with the envelope ${chunkAddr(r.derived.escrow)} and ${amount} USDC inside the data.`,
     );
   } else if (next.tool) {
     lines.push(`Next: ${next.note}`);

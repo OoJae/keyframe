@@ -5,7 +5,7 @@ import type { JobKind, JobRow, OrderRow, QuoteRow } from "../db/rows.js";
 import { checkChunk, checkManifest, checkPreview, checkStill, verifyStored } from "../delivery/artifacts.js";
 import { fileKey, quoteKeys, rawFileKey } from "../delivery/keys.js";
 import { error, json } from "../http.js";
-import { encodeFactoryCall, runAction } from "../orders/lifecycle.js";
+import { encodeFactoryCall, runAction, studioWindows } from "../orders/lifecycle.js";
 import { finalizeInstantQuote, JOB_ID } from "../quotes/service.js";
 import { termsOf } from "../quotes/view.js";
 import { nowS, type Services } from "../services.js";
@@ -233,8 +233,36 @@ export async function done(s: Services, job: JobRow, q: QuoteRow, body: z.infer<
   return studioDelivered(s, job, q, job.manifest_hash);
 }
 
+/** The one revision after a change request: still in review on-chain, no revision yet, before accept_by. */
+export function revisionOpen(order: OrderRow, q: QuoteRow, now: number): boolean {
+  if (order.tier !== "studio" || order.status !== "delivered") return false;
+  if (order.change_requested_at === null || order.change_requested_at === undefined) return false;
+  if ((order.revision_delivered_at ?? null) !== null || order.accepted === 1 || order.buyer_accepted_at) return false;
+  return now < studioWindows(order, termsOf(q)).acceptBy;
+}
+
 async function studioDelivered(s: Services, job: JobRow, q: QuoteRow, manifestHash: string) {
   const order = job.order_id ? await s.repo.getOrder(job.order_id) : null;
+  if (order && revisionOpen(order, q, nowS(s))) {
+    // The contract knows one deliver; the revision is recorded off-chain and released only on an explicit accept.
+    const now = nowS(s);
+    const previewUrl = `${s.cfg.filesBaseUrl}/${job.preview_key}`;
+    await s.repo.updateOrder(
+      order.id,
+      { revision_manifest_hash: manifestHash, revision_preview_url: previewUrl, revision_delivered_at: now },
+      now,
+    );
+    await s.repo.completeJob(job.id, now);
+    s.log.info("studio_revision_delivered", { order_id: order.id, manifest_hash: manifestHash });
+    return json(200, {
+      job_id: job.id,
+      order_id: order.id,
+      manifest_hash: manifestHash,
+      tx: null,
+      state: "revision_delivered",
+      revision: true,
+    });
+  }
   if (order?.status !== "sealed") return error(409, { error: "order_not_deliverable", status: order?.status ?? null });
   const now = nowS(s);
   if (now > order.deadline) return error(409, { error: "deadline_passed", deadline: order.deadline });
@@ -267,12 +295,13 @@ export async function failed(s: Services, job: JobRow, q: QuoteRow, body: z.infe
 
 /** Studio CLI: open a delivery job for a paid Studio order (held by the caller for 24 h). */
 export async function openStudioDelivery(s: Services, order: OrderRow, workerId: string): Promise<Response> {
-  if (order.tier !== "studio" || order.status !== "sealed") {
-    return error(409, { error: "order_not_deliverable", status: order.status });
-  }
   const q = await s.repo.getQuote(order.quote_id);
   if (!q) return error(409, { error: "order_without_quote" });
   const now = nowS(s);
+  const revision = revisionOpen(order, q, now);
+  if (order.tier !== "studio" || (order.status !== "sealed" && !revision)) {
+    return error(409, { error: "order_not_deliverable", status: order.status });
+  }
   let job = await s.repo.activeJobForQuote(q.id);
   if (job?.status === "claimed") {
     if (job.worker_id !== workerId && (job.lease_expires_at ?? 0) >= now) {

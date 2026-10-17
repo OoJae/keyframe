@@ -109,6 +109,7 @@ export class Harness {
       receiptWaitMs: cfg.receiptWaitMs,
       chain,
       factory: cfg.factory,
+      usdc: cfg.usdc,
     });
     this.s = {
       cfg,
@@ -155,6 +156,11 @@ export class Harness {
       props: {},
     };
     return this.app.request(`${PUBLIC_BASE}${path}`, init, {}, ctx as never);
+  }
+
+  /** waitUntil() promises queued and not yet drained. */
+  get backgroundCount(): number {
+    return this.pendingBackground.length;
   }
 
   /** Await every waitUntil() promise queued so far (and any they queue). */

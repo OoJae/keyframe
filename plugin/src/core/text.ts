@@ -11,16 +11,29 @@ export function clean(value: unknown, max = 200): string {
   return flat.length <= max ? flat : `${flat.slice(0, Math.max(0, max - 1))}…`;
 }
 
+/** An untrusted value as a quoted, escaped JSON string literal (an embedded quote cannot close it). */
+export const quoted = (value: unknown, max = 64): string => JSON.stringify(clean(value, max));
+
+/** A full address in groups of four for side-by-side comparison: "0x4B22 f48f B87B … b048". */
+export function chunkAddr(a: string): string {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(a)) return a;
+  return `${a.slice(0, 6)} ${(a.slice(6).match(/.{4}/g) ?? []).join(" ")}`;
+}
+
+/** UTF-8 size of a string (what reaches stdout). */
+export const utf8Bytes = (s: string): number => new TextEncoder().encode(s).byteLength;
+
 export type JsonCaps = { maxString: number; maxArray: number; maxKeys: number; maxDepth: number };
 export const DEFAULT_CAPS: JsonCaps = { maxString: 500, maxArray: 50, maxKeys: 60, maxDepth: 6 };
 
 /**
  * Deep copy of untrusted JSON with every string/array/object capped. Non-JSON values are dropped, numbers must be
- * finite, and keys are sanitized too. Deterministic: key order is preserved as received.
+ * safe integers (so "1e20" cannot expand to 21 digits on output), and keys are sanitized too. Deterministic: key
+ * order is preserved as received.
  */
 export function capJson(value: unknown, caps: JsonCaps = DEFAULT_CAPS, depth = 0): unknown {
   if (value === null || typeof value === "boolean") return value;
-  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "number") return Number.isSafeInteger(value) ? value : null;
   if (typeof value === "string") return clean(value, caps.maxString);
   if (depth >= caps.maxDepth) return null;
   if (Array.isArray(value)) return value.slice(0, caps.maxArray).map((v) => capJson(v, caps, depth + 1));
@@ -38,6 +51,29 @@ export function capJson(value: unknown, caps: JsonCaps = DEFAULT_CAPS, depth = 0
     return out;
   }
   return null;
+}
+
+/** Default serialized-size cap for one echoed backend record (an order, a catalog entry). */
+export const MAX_RECORD_BYTES = 32 * 1024;
+
+/** capJson, then null if the capped record still serializes to more than `maxBytes`. */
+export function capRecord(value: unknown, caps: JsonCaps = DEFAULT_CAPS, maxBytes = MAX_RECORD_BYTES): unknown {
+  const out = capJson(value, caps);
+  return utf8Bytes(JSON.stringify(out) ?? "null") <= maxBytes ? out : null;
+}
+
+/** Keeps records (in order) while each is at most `perRecord` and all together at most `total` bytes. */
+export function capRecords<T>(records: readonly T[], perRecord: number, total: number): T[] {
+  const out: T[] = [];
+  let used = 0;
+  for (const r of records) {
+    const n = utf8Bytes(JSON.stringify(r) ?? "null");
+    if (n > perRecord) continue;
+    if (used + n > total) break;
+    used += n;
+    out.push(r);
+  }
+  return out;
 }
 
 /** Atomic USDC (6 decimals) as a fixed-point string with at least 2 decimals: 4000000 -> "4.00". */

@@ -225,8 +225,9 @@ export class X402Runtime {
     let v: Awaited<ReturnType<KeyframeFacilitator["verify"]>>;
     try {
       v = await this.facilitator.verify(payload, requirements);
-    } catch (e) {
-      return reject(e instanceof Error ? e.message.slice(0, 120) : "verify_failed");
+    } catch {
+      // Never echo the error: viem messages carry the RPC URL (and any API key in it).
+      return reject("verify_failed");
     }
     if (!v.isValid) return reject(v.invalidReason ?? "invalid_payment");
     return {

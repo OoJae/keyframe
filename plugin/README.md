@@ -21,12 +21,12 @@ The plugin does the proof itself, without trusting Keyframe's server (ADR-009):
 |---|---|---|
 | `keyframe_styles` | data | Live catalog (`GET /v1/styles`); falls back to an embedded snapshot when the API is unreachable |
 | `keyframe_quote` | data | `POST /v1/quotes`, then the full independent review, which picks the payment route and returns the quote card |
-| `keyframe_commission` | **x402** | Re-checks everything, then `proposeX402` POST `{API}/v1/orders/{quote_id}` with `maxAmount = T.amount` and expiry ≤ min(now+240 s, quote expiry − 60 s) |
-| `keyframe_commission_direct` | **evm** | Same checks, then `USDC.transfer(E, amount)` (for 7702-delegated wallets, ADR-011) |
-| `keyframe_status` | data | Quote (finalizes drafts) or order progress, plus the envelope state from Base (SEALED / KEY PUBLISHED / RETURNED); `wait_s` ≤ 6 |
+| `keyframe_commission` | **x402** | Input `{quote_id, buyer, terms_hash}` from the quote's `next.input`. Re-checks everything (the deal must still hash to `terms_hash` for that buyer), then `proposeX402` POST `{API}/v1/orders/{quote_id}` with `maxAmount = T.amount` and expiry ≤ min(now+240 s, quote expiry − 60 s) |
+| `keyframe_commission_direct` | **evm** | Same input and checks, then `USDC.transfer(E, amount)`: the payee is fixed in the calldata (for 7702-delegated wallets, or by choice, ADR-011) |
+| `keyframe_status` | data | Quote (finalizes drafts; optional `buyer` is checked) or order progress, plus the envelope state from Base (SEALED / KEY PUBLISHED / RETURNED); `wait_s` ≤ 6 |
 | `keyframe_verify` | data | `derive` (offline and pure: **the conformance sample**), `funding`, `delivery` |
 | `keyframe_refund` | **evm** | `refund(T)` / `sweep(T, token)` / `decide(T, false)` to the allowlisted factory, only when allowed on-chain right now |
-| `keyframe_review` | data | Studio review in two stages: a checked EIP-712 `Decision` for core `request_wallet_sign`, then local signer recovery and relay |
+| `keyframe_review` | data | Studio review in two stages: a checked EIP-712 `Decision` (or the plugin's own `ChangeRequest` for changes) for core `request_wallet_sign`, then local signer recovery and relay |
 | `keyframe_orders` | data | New-chat recovery in two stages: a checked SIWE message, then local signer recovery and the buyer's orders with access tokens |
 
 Proposal tools return **only** the starter's strict proposal schemas in `structuredContent`; all human guidance goes
