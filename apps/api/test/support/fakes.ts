@@ -1,7 +1,7 @@
 import { escrowOf, hashTerms, keyframeFactoryAbi, Status, type Terms, USDC } from "@keyframe/protocol";
 import type { FacilitatorEvmSigner } from "@x402/evm";
 import { type Address, decodeFunctionData, type Hex, keccak256, toHex } from "viem";
-import type { ChainReader, OrderEvent, OrderView, TokenTransfer } from "../../src/chain.js";
+import type { ChainReader, LogQuery, OrderEvent, OrderView, TokenTransfer } from "../../src/chain.js";
 import type { ReceiptResult, RelayerClient, RelayRequest, RelayResult } from "../../src/relayer/types.js";
 import type { StorageAdapter, StoredObject } from "../../src/storage.js";
 
@@ -239,6 +239,8 @@ export interface StubChainOptions {
 export class StubChain implements ChainReader {
   readonly factory: FakeFactory;
   opts: StubChainOptions = {};
+  /** Bounds of every log lookup (transfersTo / eventTx / openedTx), for asserting what the call sites ask for. */
+  readonly logQueries: { kind: "Transfer" | OrderEvent; q?: LogQuery }[] = [];
   constructor(factory: FakeFactory) {
     this.factory = factory;
   }
@@ -260,7 +262,8 @@ export class StubChain implements ChainReader {
   async authorizationState(_token: Address, authorizer: Address, nonce: Hex) {
     return this.factory.usedAuthorizations.has(`${authorizer.toLowerCase()}:${nonce.toLowerCase()}`);
   }
-  async transfersTo(_token: Address, to: Address): Promise<TokenTransfer[]> {
+  async transfersTo(_token: Address, to: Address, q?: LogQuery): Promise<TokenTransfer[]> {
+    this.logQueries.push({ kind: "Transfer", q });
     const e = to.toLowerCase();
     const recorded = this.factory.transfers.get(e);
     if (recorded) return recorded;
@@ -268,7 +271,8 @@ export class StubChain implements ChainReader {
     return bal > 0n ? [{ from: UNKNOWN_DEPOSITOR, value: bal, tx: `0x${"de".repeat(32)}` as Hex }] : [];
   }
   /** Tx of the factory event for T: Opened → 0x0e…; a terminal event → 0xee… while T is in that state. */
-  async eventTx(_f: Address, event: OrderEvent, h: Hex) {
+  async eventTx(_f: Address, event: OrderEvent, h: Hex, q?: LogQuery) {
+    this.logQueries.push({ kind: event, q });
     if (event === "Opened") return `0x${"0e".repeat(32)}` as Hex;
     const st: Partial<Record<OrderEvent, number>> = {
       Released: Status.Released,
@@ -290,7 +294,8 @@ export class StubChain implements ChainReader {
   async getCode() {
     return undefined;
   }
-  async openedTx() {
+  async openedTx(_f: Address, _h: Hex, q?: LogQuery) {
+    this.logQueries.push({ kind: "Opened", q });
     return `0x${"0e".repeat(32)}` as Hex;
   }
   x402Signer(addresses: readonly Address[]): FacilitatorEvmSigner {

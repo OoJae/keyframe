@@ -1,6 +1,7 @@
 import { MIN_AMOUNT, newOrderId, Status } from "@keyframe/protocol";
 import type { Address, Hex } from "viem";
 import type { QuoteRow } from "../db/rows.js";
+import { DEFAULT_LOGS_BUDGET_MS } from "../logs.js";
 import { termsOf } from "../quotes/view.js";
 import { errorText } from "../redact.js";
 import { nowS, type Services } from "../services.js";
@@ -25,13 +26,24 @@ export const SANCTIONED_SENDER = "sanctioned_sender";
 
 /**
  * OFAC screening of every address that sent USDC to E (not just T.buyer: anyone can transfer to E). Clear only if
- * all senders are clear and the logs account for the balance.
+ * all senders are clear and the logs account for the balance. E is derived from T, which the API first publishes
+ * when it creates the quote, so the Transfer logs are read from the block estimated for created_at (plus margin) to
+ * the head; a transfer the scan misses shows up as an unattributed balance (fail closed).
  */
-async function screenSenders(s: Services, q: QuoteRow, bal: bigint): Promise<"clear" | "sanctioned" | "unavailable"> {
+async function screenSenders(
+  s: Services,
+  q: QuoteRow,
+  bal: bigint,
+  deadlineMs: number,
+): Promise<"clear" | "sanctioned" | "unavailable"> {
   if (!s.chain) return "unavailable";
   let transfers: Awaited<ReturnType<NonNullable<Services["chain"]>["transfersTo"]>>;
   try {
-    transfers = await s.chain.transfersTo(s.cfg.usdc, q.escrow as Address);
+    transfers = await s.chain.transfersTo(s.cfg.usdc, q.escrow as Address, {
+      sinceS: q.created_at,
+      nowS: nowS(s),
+      deadlineMs,
+    });
   } catch (e) {
     s.log.warn("direct_transfer_logs_failed", { quote_id: q.id, error: errorText(e, 120) });
     return "unavailable";
@@ -49,7 +61,13 @@ async function screenSenders(s: Services, q: QuoteRow, bal: bigint): Promise<"cl
   return "clear";
 }
 
-async function openDirect(s: Services, q: QuoteRow, bal: bigint, waitMs: number): Promise<DirectOutcome> {
+async function openDirect(
+  s: Services,
+  q: QuoteRow,
+  bal: bigint,
+  waitMs: number,
+  deadlineMs: number,
+): Promise<DirectOutcome> {
   const now = nowS(s);
   const t = termsOf(q);
   const buyerScreen = await s.sanctions.screen(t.buyer);
@@ -62,7 +80,7 @@ async function openDirect(s: Services, q: QuoteRow, bal: bigint, waitMs: number)
     s.log.warn("direct_payment_sanctioned", { quote_id: q.id });
     return "returned";
   }
-  const senders = await screenSenders(s, q, bal);
+  const senders = await screenSenders(s, q, bal, deadlineMs);
   if (senders === "unavailable") return "skipped";
   if (senders === "sanctioned") {
     // Do not register or serve, and do not touch the funds: they stay refundable to T.buyer (refund after deadline).
@@ -82,7 +100,10 @@ async function openDirect(s: Services, q: QuoteRow, bal: bigint, waitMs: number)
     // someone (anyone may call register) opened T already
     const v = await s.chain.orderOf(s.cfg.factory, q.terms_hash as Hex);
     if (v.status === Status.Open) {
-      tx = (await s.chain.openedTx(s.cfg.factory, q.terms_hash as Hex).catch(() => null)) ?? ZERO_TX;
+      tx =
+        (await s.chain
+          .openedTx(s.cfg.factory, q.terms_hash as Hex, { sinceS: Number(v.openedAt) })
+          .catch(() => null)) ?? ZERO_TX;
       confirmed = true;
     }
   }
@@ -131,14 +152,22 @@ async function returnLateFunds(s: Services, q: QuoteRow, bal: bigint, waitMs: nu
   return r.state === "confirmed" || r.state === "pending" ? "returned" : "skipped";
 }
 
-/** Check one quote's escrow for direct deposits and act on them. */
-export async function checkDirect(s: Services, q: QuoteRow, waitMs: number): Promise<DirectOutcome> {
+/**
+ * Check one quote's escrow for direct deposits and act on them. `deadlineMs` bounds the sender-screening log scan
+ * (default: 10 s from now); a scan that cannot finish in time screens as unavailable (skipped, retried later).
+ */
+export async function checkDirect(
+  s: Services,
+  q: QuoteRow,
+  waitMs: number,
+  deadlineMs: number = Date.now() + DEFAULT_LOGS_BUDGET_MS,
+): Promise<DirectOutcome> {
   if (!s.chain) return "skipped";
   const bal = await s.chain.balanceOf(s.cfg.usdc, q.escrow as Address);
   if (bal === 0n) return "none";
   const now = nowS(s);
   const live = q.status === "final" && now < q.quote_expires_at && q.deadline - now >= s.cfg.minReleaseMarginS;
-  if (live) return bal >= BigInt(q.amount) ? openDirect(s, q, bal, waitMs) : "underfunded";
+  if (live) return bal >= BigInt(q.amount) ? openDirect(s, q, bal, waitMs, deadlineMs) : "underfunded";
   if (q.status === "final" || q.status === "expired" || q.status === "cancelled") {
     return returnLateFunds(s, q, bal, waitMs);
   }
@@ -165,7 +194,7 @@ export async function scanDirectDeposits(
   for (const q of await s.repo.directCandidates(nowS(s), limit)) {
     if (Date.now() > deadlineMs) break;
     try {
-      out[await checkDirect(s, q, waitMs)]++;
+      out[await checkDirect(s, q, waitMs, Math.min(deadlineMs, Date.now() + DEFAULT_LOGS_BUDGET_MS))]++;
     } catch (e) {
       out.skipped++;
       s.log.warn("direct_scan_failed", { quote_id: q.id, error: errorText(e, 120) });

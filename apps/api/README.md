@@ -91,6 +91,7 @@ src/internal/jobs.ts     render-worker and Studio delivery API
 src/delivery/            K_file derivation, artifact validation and self-verification (KFC1)
 src/relayer/             RelayerCore (nonces, simulate-then-send, raw-tx store, reconciliation) + Durable Object
 src/chain.ts             read-only viem client (+ read-only signer for the x402 verifier)
+src/logs.ts              the one eth_getLogs path: LOGS_RPC_URL windows, RPC_URL 10-block fallback, time-bounded scans
 src/sanctions.ts         OFAC SDN ETH list: fetch, validate, cache in D1, fail closed when stale
 src/keeper.ts            cron tick
 src/db/                  typed D1 queries (every transition is a conditional UPDATE)
@@ -107,6 +108,7 @@ Vars live in `wrangler.toml`, secrets in `wrangler secret put` (locally: `.dev.v
 | `FILES_BASE_URL` | var | Optional. Default `PUBLIC_BASE_URL/files`. Set it to the R2 custom domain if you use one (= plugin `KEYFRAME_FILES_BASE`) |
 | `FACTORY_ADDRESS`, `SELLER_ADDRESS` | var | Escrow factory and its constructor `SELLER` (payout). `VAULT_IMPL_ADDRESS` defaults to CREATE(factory, 1) |
 | `RPC_URL` | var/secret | Base RPC (a secret if it embeds a key) |
+| `LOGS_RPC_URL` · `LOGS_MAX_RANGE` 2000 | var | `eth_getLogs` only (see below). Default `https://base-rpc.publicnode.com`; with a local `RPC_URL` (anvil, a fork) the default is `RPC_URL` itself. `""` = `RPC_URL` serves logs too. A secret if it embeds a key. Must serve Base mainnet |
 | `USDC_ADDRESS` | var | Default: Base USDC. Override only for local chains |
 | `X402_WIRE` | var | `v2` (default) or `v1` |
 | `FACILITATOR_FALLBACK_URL` | var | Default PayAI. Used only when the relayer cannot broadcast. `""` disables it |
@@ -125,6 +127,25 @@ Bindings: `DB` (D1), `KV` (KV), optional `FILES` (R2; otherwise KV stores artifa
 optional `RATE_LIMITER` (Workers Rate Limiting, `[[ratelimits]]` in `wrangler.toml`: caps every `/v1` request per
 client at the edge, in addition to the D1 token buckets on quotes, `/rail`, paid requests, SIWE and reviews).
 If anything required is missing, `/health` reports `configured: false` and quoting or settlement answer 503.
+
+**Log scans.** Free RPC plans cap `eth_getLogs` (Alchemy free tier: at most 10 blocks inclusive, `toBlock -
+fromBlock <= 9`), so every log lookup goes through `scanLogs` (`src/logs.ts`). It reads the range from
+`LOGS_RPC_URL` in windows of `LOGS_MAX_RANGE` blocks, except the newest 10 blocks, which come from `RPC_URL` (the
+client that read `latest`; a load-balanced public node a block or two behind refuses a `toBlock` past its own
+head). If the logs RPC fails for any reason, the rest of the range is read from `RPC_URL` in chunks of at most 10
+blocks inclusive, capped at 120 requests (1 200 blocks, 40 min of Base) and the caller's time budget (10 s by
+default; the keeper's direct-rail phase passes its own deadline). A range it cannot cover is a `LogsRangeError`,
+never a partial list. Scans start at a block estimated from a known time (`latest - ceil((now - t) / 2) - 30`,
+2 s Base blocks, never below 0):
+
+- direct-rail sender screening (`transfersTo`): `t` = the quote's `created_at` on the API clock. A transfer the
+  scan misses leaves the balance unattributed, so screening fails closed (`direct_funds_unattributed`).
+- `Opened` / `Released` / `Refunded` / `Cancelled` / `Decided` tx backfill and orphan adoption: `t` = the order's
+  on-chain `openedAt` / `finalAt`, against the latest block's timestamp. With no known time: the last 9 000 blocks.
+  An `Opened` lookup is skipped when `openedAt` is 0.
+
+The logs RPC is trusted like `RPC_URL` for these reads: screening also requires the logs to account for E's full
+balance (read from `RPC_URL`), so a missing log blocks the order, it never clears one.
 
 ## Develop and test
 
@@ -157,6 +178,7 @@ cp .dev.vars.example .dev.vars && pnpm -F @keyframe/api db:migrate:local && pnpm
 anvil --fork-url "$BASE_RPC_URL" --fork-block-number <pinned> --chain-id 8453
 # deploy the factory with contracts/script, fund the relayer key with fork ETH, then in apps/api/.dev.vars:
 #   RPC_URL=http://127.0.0.1:8545  FACTORY_ADDRESS=0x…  SELLER_ADDRESS=0x…  PUBLIC_BASE_URL=http://localhost:8787
+#   (logs then come from the fork too: a local RPC_URL is the LOGS_RPC_URL default)
 #   RELAYER_PRIVATE_KEY=<fork-funded key>  (+ KMASTER, ACCESS_SECRET, WORKER_TOKEN)
 pnpm -F @keyframe/api db:migrate:local && pnpm -F @keyframe/api dev
 # pay with @x402/fetch (ExactEvmScheme client, spendControls off) from a fork account holding real USDC
@@ -202,7 +224,8 @@ pnpm exec wrangler d1 create keyframe                 # paste database_id into w
 pnpm exec wrangler kv namespace create KV             # paste the id into wrangler.toml
 pnpm exec wrangler r2 bucket create keyframe-files    # optional: uncomment [[r2_buckets]], set FILES_BASE_URL
 pnpm exec wrangler d1 migrations apply keyframe --remote
-# vars in wrangler.toml: PUBLIC_BASE_URL, FACTORY_ADDRESS, SELLER_ADDRESS, RPC_URL (or as a secret)
+# vars in wrangler.toml: PUBLIC_BASE_URL, FACTORY_ADDRESS, SELLER_ADDRESS, RPC_URL (or as a secret);
+#   LOGS_RPC_URL / LOGS_MAX_RANGE only to override the public logs RPC default (README "Log scans")
 openssl rand -hex 32 | pnpm exec wrangler secret put KMASTER
 openssl rand -hex 32 | pnpm exec wrangler secret put ACCESS_SECRET
 openssl rand -base64 48 | tr -d '\n=/+' | pnpm exec wrangler secret put WORKER_TOKEN

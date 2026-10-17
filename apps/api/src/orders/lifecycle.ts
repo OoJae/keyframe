@@ -91,10 +91,13 @@ async function chainPatch(s: Services, order: OrderRow, seen?: OrderView): Promi
   try {
     const v = seen ?? (await s.chain.orderOf(s.cfg.factory, order.terms_hash as Hex));
     const patch = patchFromChain(v);
-    // Someone else (buyer, refundExpired, KeeperHub) finished the order: fill the tx from the factory's event.
+    // Someone else (buyer, refundExpired, KeeperHub) finished the order: fill the tx from the factory's event,
+    // looked up from the block of finalAt (the event's own block timestamp) on.
     const ev = isTerminal(v.status) ? TERMINAL_EVENT[v.status] : undefined;
     if (ev && !order[ev[1]]) {
-      const tx = await s.chain.eventTx(s.cfg.factory, ev[0], order.terms_hash as Hex).catch(() => null);
+      const tx = await s.chain
+        .eventTx(s.cfg.factory, ev[0], order.terms_hash as Hex, { sinceS: Number(v.finalAt) })
+        .catch(() => null);
       if (tx) (patch as Record<string, unknown>)[ev[1]] = tx;
     }
     return patch;

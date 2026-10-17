@@ -1,6 +1,7 @@
 import { CHAIN_ID, MAX_AMOUNT, USDC, vaultImplOf } from "@keyframe/protocol";
 import { type Address, getAddress, type Hex, isAddress } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { DEFAULT_LOGS_MAX_RANGE } from "./logs.js";
 
 // Typed configuration parsed once per isolate from Worker vars + secrets. Secrets are held as values here and
 // never logged; `publicConfig()` is the only view that leaves the process (/health).
@@ -15,6 +16,8 @@ export interface RawEnv {
   OPERATOR_ADDRESS?: string;
   USDC_ADDRESS?: string;
   RPC_URL?: string;
+  LOGS_RPC_URL?: string;
+  LOGS_MAX_RANGE?: string;
   X402_WIRE?: string;
   FACILITATOR_FALLBACK_URL?: string;
   MAX_AMOUNT?: string;
@@ -55,6 +58,10 @@ export interface Config {
   operator: Address | null;
   usdc: Address;
   rpcUrl: string | null;
+  /** eth_getLogs only (null: RPC_URL serves logs too). */
+  logsRpcUrl: string | null;
+  /** Blocks per eth_getLogs request on the logs RPC. */
+  logsMaxRange: number;
   wire: X402Wire;
   facilitatorFallbackUrl: string | null;
   maxAmount: bigint;
@@ -96,6 +103,8 @@ export interface Secrets {
 export const DEFAULT_OFAC_LIST_URL =
   "https://raw.githubusercontent.com/0xB10C/ofac-sanctioned-digital-currency-addresses/lists/sanctioned_addresses_ETH.json";
 export const DEFAULT_FACILITATOR_FALLBACK_URL = "https://facilitator.payai.network";
+/** Public Base RPC that serves wide eth_getLogs ranges (RPC_URL providers on free plans allow 10 blocks). */
+export const DEFAULT_LOGS_RPC_URL = "https://base-rpc.publicnode.com";
 /** Contract bounds (KeyframeEscrowFactory MAX_REVIEW_WINDOW, kill fee cap); quotes outside them are refused. */
 export const MAX_REVIEW_WINDOW_S = 14 * 86_400;
 export const MAX_KILL_FEE_BPS = 5_000;
@@ -148,6 +157,27 @@ function hexBytes(raw: string | undefined): Uint8Array | null {
   return out;
 }
 
+const HTTP_URL = /^https?:\/\//;
+
+function isLocalUrl(raw: string): boolean {
+  try {
+    const h = new URL(raw).hostname;
+    return h === "localhost" || h === "127.0.0.1" || h === "[::1]" || h.endsWith(".localhost");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * LOGS_RPC_URL: unset ⇒ the public default, except with a local RPC_URL (anvil, a fork), whose logs only that node
+ * has; "" or an invalid value ⇒ null (RPC_URL serves eth_getLogs too, in 10-block chunks when it refuses wider).
+ */
+function logsRpcUrlOf(raw: string | undefined, rpcUrl: string | null): string | null {
+  if (raw === undefined) return rpcUrl && isLocalUrl(rpcUrl) ? null : DEFAULT_LOGS_RPC_URL;
+  const v = raw.trim();
+  return HTTP_URL.test(v) ? v : null;
+}
+
 const list = (raw: string | undefined): string[] =>
   (raw ?? "")
     .split(",")
@@ -196,6 +226,7 @@ export function parseConfig(env: RawEnv): Config {
   }
   const wire: X402Wire = env.X402_WIRE === "v1" ? "v1" : "v2";
   const fallback = env.FACILITATOR_FALLBACK_URL ?? DEFAULT_FACILITATOR_FALLBACK_URL;
+  const rpcUrl = env.RPC_URL && HTTP_URL.test(env.RPC_URL) ? env.RPC_URL : null;
 
   return {
     publicBaseUrl,
@@ -205,7 +236,9 @@ export function parseConfig(env: RawEnv): Config {
     seller,
     operator,
     usdc,
-    rpcUrl: env.RPC_URL && /^https?:\/\//.test(env.RPC_URL) ? env.RPC_URL : null,
+    rpcUrl,
+    logsRpcUrl: logsRpcUrlOf(env.LOGS_RPC_URL, rpcUrl),
+    logsMaxRange: int(env.LOGS_MAX_RANGE, DEFAULT_LOGS_MAX_RANGE, 1, 50_000),
     wire,
     facilitatorFallbackUrl: fallback.trim() === "" ? null : fallback.trim(),
     maxAmount,

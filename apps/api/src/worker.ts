@@ -25,7 +25,9 @@ function services(env: WorkerEnv): Services {
   const repo = new Repo(env.DB);
   const storage = storageFor({ FILES: env.FILES, KV: env.KV });
   if (!storage) throw new Error("no storage binding (FILES or KV)");
-  const chain = cfg.rpcUrl ? viemChainReader(cfg.rpcUrl) : null;
+  const chain = cfg.rpcUrl
+    ? viemChainReader(cfg.rpcUrl, { logsRpcUrl: cfg.logsRpcUrl, logsMaxRange: cfg.logsMaxRange })
+    : null;
   const relayer = durableRelayer(env.RELAYER);
   const sanctions = new Sanctions(repo, {
     listUrl: cfg.ofacListUrl,

@@ -61,6 +61,13 @@ SELLER_ADDRESS = "0x0000000000000000000000000000000000000000"
 # USDC_ADDRESS defaults to Base USDC 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 (override only for local chains).
 # RPC_URL may be set here if it carries no key; otherwise: wrangler secret put RPC_URL
 RPC_URL = "https://mainnet.base.org"
+# eth_getLogs only (direct-rail sender screening, *_tx backfill). RPC_URL providers on free plans cap eth_getLogs
+# (Alchemy free tier: 10 blocks inclusive), so logs are read from LOGS_RPC_URL in LOGS_MAX_RANGE-block windows; the
+# newest 10 blocks, and anything it refuses, come from RPC_URL in 10-block chunks (at most 120 per scan). Defaults:
+# https://base-rpc.publicnode.com (RPC_URL itself when RPC_URL is local) and 2000. "" = RPC_URL only. Must serve
+# Base mainnet; a secret if it embeds a key. Left unset here so the local-RPC default applies under `wrangler dev`.
+# LOGS_RPC_URL = "https://base-rpc.publicnode.com"
+# LOGS_MAX_RANGE = "2000"
 # v2 = PAYMENT-REQUIRED header + {} body (default); v1 = JSON body only (network "base", maxAmountRequired).
 X402_WIRE = "v2"
 # Fallback settlement when the relayer cannot broadcast ("" disables). Never x402.org.

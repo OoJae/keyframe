@@ -114,7 +114,7 @@ export class KeyframeFacilitator implements FacilitatorClient {
     if (v.status !== Status.Open || !isAddressEqual(v.buyer, target.terms.buyer)) {
       return fail(`funding_rejected: AlreadyRegistered() (status ${v.status})`);
     }
-    const tx = await chain.openedTx(this.d.factory, target.termsHash).catch(() => null);
+    const tx = await chain.openedTx(this.d.factory, target.termsHash, { sinceS: Number(v.openedAt) }).catch(() => null);
     return ok({ rail: "relayer", funding: "confirmed", tx: tx ?? ZERO_TX });
   }
 

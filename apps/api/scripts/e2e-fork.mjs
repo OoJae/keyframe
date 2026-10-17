@@ -809,6 +809,11 @@ async function main() {
           SELLER_ADDRESS: seller.address,
           OPERATOR_ADDRESS: relayer.address,
           RPC_URL: proxy.url,
+          // eth_getLogs straight from the fork (the default public Base RPC knows nothing of fork-local logs). anvil
+          // forwards the pre-fork part of a range to FORK_URL (Alchemy free tier: ≤ 10 blocks), so wide scans that
+          // reach before the fork block are refused and the API falls back to ≤ 10-block chunks on RPC_URL.
+          LOGS_RPC_URL: ANVIL,
+          LOGS_MAX_RANGE: "2000",
           X402_WIRE: "v2",
           FACILITATOR_FALLBACK_URL: "",
           MAX_AMOUNT: "50000000",

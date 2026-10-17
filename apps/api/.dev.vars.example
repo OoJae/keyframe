@@ -10,6 +10,10 @@ RELAYER_PRIVATE_KEY=0x<64 hex chars>
 
 # Optional overrides for local chains (anvil fork of Base, see README "Local interop"):
 # RPC_URL=http://127.0.0.1:8545
+# eth_getLogs only. Default https://base-rpc.publicnode.com, or RPC_URL itself when RPC_URL is local (as above);
+# "" = RPC_URL serves logs too. LOGS_MAX_RANGE = blocks per request on it (default 2000).
+# LOGS_RPC_URL=http://127.0.0.1:8545
+# LOGS_MAX_RANGE=2000
 # FACTORY_ADDRESS=0x...
 # SELLER_ADDRESS=0x...
 # PUBLIC_BASE_URL=http://localhost:8787

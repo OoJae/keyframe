@@ -1,8 +1,11 @@
-import { keyframeFactoryAbi, Status } from "@keyframe/protocol";
+import { keyframeFactoryAbi, Status, USDC } from "@keyframe/protocol";
 import { decodeFunctionData, type Hex } from "viem";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
+import { viemChainReader } from "../src/chain.js";
 import { keeperTick } from "../src/keeper.js";
-import { Harness } from "./support/harness.js";
+import { SANCTIONED_SENDER } from "../src/orders/direct.js";
+import { allWithin, covers, type FakeLog, type FakeRpc, startFakeRpc, transferLog } from "./support/fake-rpc.js";
+import { Harness, SANCTIONED } from "./support/harness.js";
 
 // Direct rail (USDC.transfer to E, no x402 request) and the already-registered settlement case (ADR-004).
 
@@ -85,5 +88,83 @@ describe("already registered (ADR-004)", () => {
       req.kind === "fund" ? { state: "rejected", reason: "AlreadyRegistered()" } : undefined;
     const res = await h.pay(q.quote_id, await h.paymentHeaders(q.quote_id));
     expect(res.status).toBe(402);
+  });
+});
+
+// Production bug (Base mainnet, Alchemy free-tier RPC_URL): the sender screening read Transfer logs over a fixed
+// 2000-block lookback, every eth_getLogs above 10 blocks was refused, screening failed closed with
+// direct_transfer_logs_failed and no direct-rail deposit was ever registered (e2e step 7.4).
+describe("direct rail sender screening when the logs RPC refuses wide ranges", () => {
+  const HEAD = 40_000_000n;
+  const rpcs: FakeRpc[] = [];
+  afterAll(async () => {
+    await Promise.all(rpcs.map((r) => r.close()));
+  });
+
+  /** RPC_URL and LOGS_RPC_URL both behave like Alchemy's free tier (≤ 10 blocks inclusive per eth_getLogs). */
+  async function withRealLogs(h: Harness, logs: FakeLog[]) {
+    const main = await startFakeRpc({ head: HEAD, logs, maxRange: 10 });
+    const pub = await startFakeRpc({ head: HEAD, logs, maxRange: 10 });
+    rpcs.push(main, pub);
+    const real = viemChainReader(main.url, { logsRpcUrl: pub.url, logsMaxRange: 2_000 });
+    h.chain.transfersTo = (token, to, q) => real.transfersTo(token, to, q);
+    return { main, pub };
+  }
+
+  it("a clean deposit is screened through ≤ 10-block chunks from the quote's creation and the order opens", async () => {
+    const h = new Harness();
+    const q = await h.finalQuote();
+    const amount = BigInt(q.terms.amount);
+    const { main, pub } = await withRealLogs(h, [transferLog(USDC, h.buyer.address, q.escrow, amount, HEAD - 4n)]);
+    fund(h, q.escrow, amount);
+    h.advance(100); // quote created 100 s ago (plus the render): the scan starts ~50 + 30 blocks back
+    const r = await keeperTick(h.s, { waitMs: 0 });
+    expect(r.direct_opened).toBe(1);
+    expect(h.relayer.count("register")).toBe(1);
+    expect(h.factory.view(q.terms_hash).status).toBe(Status.Released);
+    const row = await h.repo.getQuote(q.quote_id);
+    const from = HEAD - BigInt(Math.ceil((h.nowS() - (row?.created_at ?? 0)) / 2) + 30);
+    expect(pub.ranges).toEqual([[from, HEAD - 10n]]); // refused (wider than 10 blocks)
+    expect(allWithin(main.ranges, 10)).toBe(true);
+    expect(covers(main.ranges, from, HEAD)).toBe(true);
+    expect(HEAD - from).toBeLessThan(200n); // not the old fixed 2000-block lookback
+  });
+
+  it("a sanctioned sender found in an early chunk still refuses the quote", async () => {
+    const h = new Harness();
+    const q = await h.finalQuote();
+    const amount = BigInt(q.terms.amount);
+    await withRealLogs(h, [
+      transferLog(USDC, SANCTIONED.address, q.escrow, 1n, HEAD - 25n),
+      transferLog(USDC, h.buyer.address, q.escrow, amount, HEAD - 1n),
+    ]);
+    fund(h, q.escrow, amount + 1n);
+    const r = await keeperTick(h.s, { waitMs: 0 });
+    expect(r.direct_opened).toBe(0);
+    expect(h.relayer.count("register")).toBe(0);
+    expect((await h.repo.getQuote(q.quote_id))?.cancel_reason).toBe(SANCTIONED_SENDER);
+  });
+
+  it("a deposit older than the scan shows up as unattributed funds: fail closed, nothing registered", async () => {
+    const h = new Harness();
+    const q = await h.finalQuote();
+    const amount = BigInt(q.terms.amount);
+    await withRealLogs(h, [transferLog(USDC, h.buyer.address, q.escrow, amount, HEAD - 5_000n)]);
+    fund(h, q.escrow, amount);
+    const r = await keeperTick(h.s, { waitMs: 0 });
+    expect(r.direct_opened).toBe(0);
+    expect(h.relayer.count("register")).toBe(0);
+    expect((await h.repo.getQuote(q.quote_id))?.status).toBe("final");
+  });
+
+  it("call sites bound every log lookup by a known time", async () => {
+    const h = new Harness();
+    const q = await h.finalQuote();
+    fund(h, q.escrow, 1_000_000n);
+    await keeperTick(h.s, { waitMs: 0 });
+    const row = await h.repo.getQuote(q.quote_id);
+    const t = h.chain.logQueries.find((x) => x.kind === "Transfer");
+    expect(t?.q).toMatchObject({ sinceS: row?.created_at, nowS: h.nowS() });
+    expect(typeof t?.q?.deadlineMs).toBe("number");
   });
 });

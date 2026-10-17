@@ -185,13 +185,21 @@ export async function reconcileSettlement(
       s.log.error("orphan_settlement_buyer_mismatch", { quote_id: q.id, chain_status: view.status });
       return "waiting";
     }
-    const tx = (await chain.eventTx(s.cfg.factory, "Opened", q.terms_hash as Hex).catch(() => null)) ?? ZERO_TX;
+    // openedAt == 0: closed without ever being registered, so there is no Opened event to look up.
+    const tx =
+      (view.openedAt > 0n
+        ? await chain
+            .eventTx(s.cfg.factory, "Opened", q.terms_hash as Hex, { sinceS: Number(view.openedAt) })
+            .catch(() => null)
+        : null) ?? ZERO_TX;
     funding = { rail: pay?.rail === "payai" ? "payai" : "relayer", funding: "confirmed", tx, registered: true };
     patch = patchFromChain(view);
   } else {
     const bal = await chain.balanceOf(s.cfg.usdc, q.escrow as Address);
     if (bal >= BigInt(q.amount)) {
-      const transfers = await chain.transfersTo(s.cfg.usdc, q.escrow as Address).catch(() => []);
+      const transfers = await chain
+        .transfersTo(s.cfg.usdc, q.escrow as Address, { sinceS: q.created_at, nowS: nowS(s) })
+        .catch(() => []);
       funding = { rail: "payai", funding: "confirmed", tx: transfers[0]?.tx ?? ZERO_TX, registered: false };
     } else if (bal > 0n) {
       // Less than the amount (someone else's partial transfer): not this authorization's money. It stays
