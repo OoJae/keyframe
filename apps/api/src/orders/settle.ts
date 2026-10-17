@@ -6,6 +6,7 @@ import { error, json } from "../http.js";
 import { termsOf } from "../quotes/view.js";
 import { errorText } from "../redact.js";
 import { nowS, type Services } from "../services.js";
+import { watchUrl } from "../web/links.js";
 import { V1_NETWORK } from "../x402/facilitator.js";
 import { utf8ToBase64 } from "../x402/payment.js";
 import { accessToken } from "./access.js";
@@ -83,6 +84,8 @@ export async function paidBody(s: Services, q: QuoteRow, orderId: string, f: Fun
     k_buyer: kBuyer,
     status_url: `${s.cfg.publicBaseUrl}/v1/orders/${orderId}`,
     next: "keyframe_verify",
+    // additive
+    watch_url: watchUrl(s.cfg, orderId),
   });
 }
 

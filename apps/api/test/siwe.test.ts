@@ -97,12 +97,20 @@ describe("SIWE recovery", () => {
     ).toBe(401);
   });
 
-  it("public list exposes only ids and statuses", async () => {
+  it("public list exposes only ids, statuses and the (secret-free) watch link", async () => {
     const h = new Harness();
     const paid = await paidOrder(h, "public");
     const list = await (await h.request(`/v1/orders?buyer=${h.buyer.address}`)).json();
+    const watch = `https://api.keyframe.test/w/${paid.order_id}`;
     expect(list.orders).toEqual([
-      { order_id: paid.order_id, status: "key_published", tier: "instant", created_at: expect.any(Number) },
+      {
+        order_id: paid.order_id,
+        status: "key_published",
+        tier: "instant",
+        created_at: expect.any(Number),
+        watch_url: watch,
+        links: [{ kind: "watch", url: watch }],
+      },
     ]);
     expect((await h.request("/v1/orders?buyer=nope")).status).toBe(400);
   });
