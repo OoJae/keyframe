@@ -4,6 +4,7 @@ import { catalogItem, formatUsdc } from "../catalog.js";
 import type { Config } from "../config.js";
 import type { QuoteRow } from "../db/rows.js";
 import { keys } from "../storage.js";
+import { previewPageUrl } from "../web/links.js";
 import type { ChargeableQuote } from "../x402/server.js";
 
 // The §7 quote object (fields the plugin relies on) plus additive fields. Settling is reported as "final":
@@ -82,6 +83,9 @@ export function quoteView(q: QuoteRow, cfg: Config, nowS: number) {
     terms_final: status !== "draft",
     ...(status === "draft" ? { escrow_status: "provisional_do_not_pay", notice: DRAFT_NOTICE } : {}),
     ...(q.cancel_reason ? { cancel_reason: q.cancel_reason } : {}),
+    ...(q.preview_url && (status === "final" || status === "paid")
+      ? { links: [{ kind: "preview", url: previewPageUrl(cfg, q.id) }] }
+      : {}),
   };
 }
 

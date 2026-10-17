@@ -34,12 +34,17 @@ export interface R2ObjectLike {
   arrayBuffer(): Promise<ArrayBuffer>;
 }
 
+export interface R2HeadLike {
+  size: number;
+  httpMetadata?: { contentType?: string };
+}
+
 export interface R2Like {
   put(
     key: string,
     value: ArrayBuffer | ArrayBufferView | string,
     options?: { httpMetadata?: { contentType?: string; cacheControl?: string } },
   ): Promise<unknown>;
-  get(key: string): Promise<R2ObjectLike | null>;
-  head(key: string): Promise<{ size: number } | null>;
+  get(key: string, options?: { range?: { offset: number; length: number } }): Promise<R2ObjectLike | null>;
+  head(key: string): Promise<R2HeadLike | null>;
 }

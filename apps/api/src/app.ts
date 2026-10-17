@@ -4,6 +4,7 @@ import { siweChallenge, siweVerify } from "./auth/siwe.js";
 import { CATALOG, type CatalogItem, formatUsdc } from "./catalog.js";
 import { publicConfig } from "./config.js";
 import { llmsTxt, openApi, POLICY_NOTES } from "./discovery.js";
+import { serveFile } from "./files.js";
 import { error, json, readBody, readJson, safeEqual } from "./http.js";
 import {
   ClaimBody,
@@ -32,7 +33,10 @@ import { clientKey, RATE_RULES, throttle } from "./ratelimit.js";
 import { errorText } from "./redact.js";
 import { reviewChallenge, reviewSubmit } from "./reviews.js";
 import { nowS, type Services } from "./services.js";
-import { IMMUTABLE_CACHE, isPublicKey } from "./storage.js";
+import { homePage } from "./web/home.js";
+import { notFoundPage } from "./web/html.js";
+import { previewPage } from "./web/preview.js";
+import { watchPage } from "./web/watch.js";
 
 // HTTP surface (frozen-interfaces.md §7 plus /files and /internal). Route handlers stay thin; behaviour lives in
 // the modules they call.
@@ -272,20 +276,17 @@ export function createApp(hooks: AppHooks) {
   });
 
   // Public artifact storage (used when FILES_BASE_URL points here, e.g. KV-backed deployments).
-  app.get("/files/*", async (c) => {
-    const key = c.req.path.slice("/files/".length);
-    if (!isPublicKey(key)) return error(404, { error: "not_found" });
-    const obj = await c.var.services.storage.get(key);
-    if (!obj) return error(404, { error: "not_found" });
-    return new Response(obj.bytes, {
-      status: 200,
-      headers: {
-        "Content-Type": obj.contentType,
-        "Cache-Control": IMMUTABLE_CACHE,
-        "Content-Length": String(obj.bytes.byteLength),
-        "Access-Control-Allow-Origin": "*",
-      },
-    });
+  app.get("/files/*", (c) => serveFile(c.var.services, c.req.path.slice("/files/".length), c.req.raw));
+
+  // Human pages (src/web): front door, watch & download, quote preview.
+  app.get("/", (c) => homePage(c.var.services));
+  app.get("/w/:id", (c) => {
+    const id = c.req.param("id");
+    return ORDER_ID.test(id) ? watchPage(c.var.services, id) : notFoundPage(c.var.services.cfg, "Order");
+  });
+  app.get("/q/:id", (c) => {
+    const id = c.req.param("id");
+    return QUOTE_ID.test(id) ? previewPage(c.var.services, id) : notFoundPage(c.var.services.cfg, "Quote");
   });
 
   // ------------------------------------------------------------------ internal (render worker, Studio CLI)

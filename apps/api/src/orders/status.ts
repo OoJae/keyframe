@@ -4,6 +4,7 @@ import type { OrderRow, QuoteRow } from "../db/rows.js";
 import { error, json } from "../http.js";
 import { manifestUrl, termsOf } from "../quotes/view.js";
 import { nowS, type Services } from "../services.js";
+import { orderLinks } from "../web/links.js";
 import { accessToken, checkAccessToken } from "./access.js";
 import { CHANGES_POLICY, RELEASE_GRACE_S, studioWindows } from "./lifecycle.js";
 
@@ -99,6 +100,7 @@ export async function orderView(s: Services, o: OrderRow, q: QuoteRow, owner: bo
         }
       : {}),
     ...(owner && q.delivery === "private" && kmaster ? { k_buyer: await deriveKBuyer(kmaster, q.id) } : {}),
+    ...orderLinks(s.cfg, o),
   };
 }
 
@@ -119,7 +121,13 @@ export async function listOrders(s: Services, buyer: string | undefined): Promis
   return json(200, {
     v: 1,
     buyer: getAddress(buyer),
-    orders: rows.map((o) => ({ order_id: o.id, status: o.status, tier: o.tier, created_at: o.created_at })),
+    orders: rows.map((o) => ({
+      order_id: o.id,
+      status: o.status,
+      tier: o.tier,
+      created_at: o.created_at,
+      ...orderLinks(s.cfg, o),
+    })),
     as_of: nowS(s),
   });
 }
@@ -142,6 +150,7 @@ export async function ownerOrders(s: Services, buyerLc: string) {
       access_token: await accessToken(accessSecret, o.id),
       k_buyer: q.delivery === "private" ? await deriveKBuyer(kmaster, q.id) : null,
       status_url: `${s.cfg.publicBaseUrl}/v1/orders/${o.id}`,
+      ...orderLinks(s.cfg, o),
     });
   }
   return out;
