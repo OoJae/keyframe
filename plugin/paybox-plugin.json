@@ -1,0 +1,6 @@
+{
+  "tool": "echo",
+  "arguments": {
+    "message": "hello paybox"
+  }
+}

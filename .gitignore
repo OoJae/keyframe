@@ -1,0 +1,28 @@
+# toolchains & deps
+.tools/
+node_modules/
+**/node_modules/
+# build output
+dist/
+out/
+cache/
+**/out/
+**/cache/
+broadcast/
+# secrets & env
+.env
+.env.*
+!.env.example
+*.key
+*.keystore
+.dev.vars
+# os / editor
+.DS_Store
+*.log
+# renders & media (large)
+renders/
+*.mp4
+*.mov
+*.wav
+!templates/**/samples/*.mp4
+.wrangler/
