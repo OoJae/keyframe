@@ -67,6 +67,7 @@ ${POLICY_NOTES.map((n) => `- ${n}`).join("\n")}
 - Max order: ${formatUsdc(cfg.maxAmount < MAX_AMOUNT ? cfg.maxAmount : MAX_AMOUNT)} USDC. Contracts are unaudited.
 - Escrow factory: ${cfg.factory} (Base mainnet, chain id 8453).
 - OpenAPI: ${cfg.publicBaseUrl}/openapi.json
+- Source code (MIT): https://github.com/OoJae/keyframe
 `;
 }
 

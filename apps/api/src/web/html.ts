@@ -179,7 +179,7 @@ export const header = (right = "") =>
   `<header class="top"><a class="brand" href="/"><i></i>Keyframe</a>${right ? `<span class="faint mono">${right}</span>` : ""}</header>`;
 
 export const footer = (extra = "") =>
-  `<footer>${extra}<p><a href="/">Keyframe</a> · <a href="/llms.txt">llms.txt</a> · <a href="/openapi.json">API</a> · <a href="/health">status</a> · Contracts are unaudited; every order is capped at 50 USDC.</p></footer>`;
+  `<footer>${extra}<p><a href="/">Keyframe</a> · <a href="/llms.txt">llms.txt</a> · <a href="/openapi.json">API</a> · <a href="/health">status</a> · <a href="https://github.com/OoJae/keyframe">source</a> · Contracts are unaudited; every order is capped at 50 USDC.</p></footer>`;
 
 /** HTML 404 for the human pages (the JSON API keeps its JSON 404s). */
 export function notFoundPage(cfg: Config, what: string): Promise<Response> {
