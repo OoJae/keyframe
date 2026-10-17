@@ -98,10 +98,16 @@ without a mapper cannot be rendered from a job.
 
 The same image runs 24/7 on Railway: project `keyframe-worker`, service `render-worker`. It is built from this
 Dockerfile with the repository root as context; the root `.railwayignore` limits the upload to `apps/worker` and
-`templates`, and never includes `.env` or `node_modules`. The service always restarts, is capped at 4 vCPU and
-4 GB, and has no public port, because the worker only calls the API outbound. Variables: `API_BASE`, `WORKER_ID=render-railway-1`,
-`BROWSER_GPU=off`, `POLL_INTERVAL_MS=3000`, `RENDER_LANES=1`, `RENDER_WORKERS=3`, `HEALTH_HOST=0.0.0.0`, and the secret
+`templates`, and never includes `.env` or `node_modules`. The service always restarts, is capped at 8 vCPU and
+8 GB, and has no public port, because the worker only calls the API outbound. Variables: `API_BASE`, `WORKER_ID=render-railway-1`,
+`BROWSER_GPU=off`, `POLL_INTERVAL_MS=5000`, `RENDER_LANES=1`, `RENDER_WORKERS=3`, `HEALTH_HOST=0.0.0.0`, and the secret
 `WORKER_TOKEN`, which is set with the CLI and never printed. Redeploy from the repository root with `railway up --service render-worker`.
+
+Measured on Railway with software rendering: a countdown is claimed within one poll, its watermarked still is ready
+about 4 s later, and it is final in about 45 s, comfortably inside the catalog's ETA. Six lanes was slower than three,
+because software GL is CPU-bound and extra Chromes only compete for cores. The builder's Mac still runs as a second worker
+when it is on. It polls every 2 s against Railway's 5 s, so it usually claims first and renders in about 16 s. Claims are
+atomic, and whichever worker is up keeps the studio online.
 
 ### VPS (primary): Docker, linux/amd64
 
