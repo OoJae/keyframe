@@ -36,3 +36,6 @@ apps/api/wrangler.production.toml
 
 # the builder's local copy of docs/PLAN.md
 buildplan.md
+
+# local recordings
+*.m4a

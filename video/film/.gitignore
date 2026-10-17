@@ -1,2 +1,5 @@
 renders/
 .hyperframes/
+# the builder's voice stays out of the public repo (see README for how vo.wav is made)
+assets/vo/*.m4a
+assets/vo/*.wav

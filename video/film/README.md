@@ -1,6 +1,6 @@
 # Keyframe demo film
 
-87 s, 1920×1080, 30 fps. Built in HyperFrames from real footage of the live product:
+78 s, 1920×1080, 30 fps, with the builder's own voiceover (retimed to it). Built in HyperFrames from real footage of the live product:
 - the Claude.ai quote (a fresh chat, 2026-10-17);
 - the PayBox card from the first mainnet order;
 - Basescan: the funding transaction, the release transaction and its event log;
@@ -14,8 +14,13 @@ Render (from this folder; HyperFrames 0.8.140, the builder's pinned install):
 ```bash
 HF=/Users/oluwademilade/Desktop/ignix/video/hyperframes/node_modules/.bin/hyperframes
 HYPERFRAMES_NO_TELEMETRY=1 HYPERFRAMES_NO_UPDATE_CHECK=1 $HF render . --fps 30 --quality looks --video-frame-format png -o renders/keyframe-final-silent.mp4
-ffmpeg -i renders/keyframe-final-silent.mp4 -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=48000 -shortest -c:v copy -c:a aac -b:a 128k -movflags +faststart renders/keyframe-demo.mp4
+ffmpeg -i renders/keyframe-final-silent.mp4 -c copy -movflags +faststart renders/keyframe-demo.mp4
 ```
+
+Voiceover: the builder's recording (`assets/vo/raw.m4a`, not committed) is cleaned and normalised to -16 LUFS with
+`ffmpeg -i assets/vo/raw.m4a -af "highpass=f=80,afftdn=nf=-28,acompressor=threshold=-21dB:ratio=2.5:attack=8:release=120:makeup=2,loudnorm=I=-16:TP=-1.5:LRA=9" -ar 48000 -ac 2 assets/vo/vo.wav`.
+It sits at 0.5 s in the timeline. Scene windows and reveals come from its word timings (`assets/vo/transcript.json`,
+from `hyperframes transcribe`), with each reveal landing about 0.15 s before its word.
 
 ## Scenes
 
