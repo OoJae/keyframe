@@ -303,7 +303,7 @@ describe("keyframe_verify delivery: Keyframe's watch link (F02)", () => {
     expect((r.structuredContent as Record<string, Json>).verdict, r.text).toBe("verified");
     const lines = r.text.split("\n");
     const at = lines.indexOf(`Watch & download: ${JSON.stringify(url)}`);
-    expect(lines[at - 1]).toMatch(/^Encrypted copy: .*without Keyframe's server\.$/);
+    expect(lines[at - 1]).toMatch(/^Encrypted copy: .*without trusting Keyframe's server\.$/);
     expect(r.text).not.toContain(FALLBACK);
     expect(r.text).not.toContain("download link is in keyframe_status");
   });
@@ -324,7 +324,7 @@ describe("keyframe_verify delivery: Keyframe's watch link (F02)", () => {
     world.release(rec.quote.quote_id as string);
     let r = await call(verifyTool, { mode: "delivery", paid_response: paid });
     expect(r.text).toContain(
-      `(chunks alongside). The key is public on Base, so this file stays openable even without Keyframe's server. ${FALLBACK}`,
+      `(chunks alongside). The key is public on Base, so anyone with this encrypted copy can open and check it without trusting Keyframe's server. ${FALLBACK}`,
     );
     expect(r.text).not.toContain("Watch & download");
     for (const url of [...HOSTILE_URLS.slice(0, 5), ...CONTROL_URLS]) {

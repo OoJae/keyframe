@@ -9,7 +9,7 @@ and hosts can still change.
   [evidence/LIVE.md](evidence/LIVE.md).
 - **Full system test:** 49/49 on a Base fork with real USDC, on all of today's code.
 - **Plugin bundle (needs your upload):** `plugin/dist/plugin.mjs`, sha256
-  `01735160fc949bdced447c63b8b33670f997126babc992b1372c6fc6af2dbaa4`.
+  `ead285eb2c22d3caf448dc3cff5378088f1e0034331707e351b0e056dcfa63a2`.
   - Tool text now prints Keyframe's own links: watch & download, motion preview, review preview, samples.
   - Tool descriptions use the words people search for (video, animation, logo intro, MP4).
   - Adds a Solana-USDC funding hint.

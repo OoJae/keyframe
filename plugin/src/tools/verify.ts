@@ -382,7 +382,7 @@ function finish(
   ];
   if (deliveryOut && typeof deliveryOut.manifest_url === "string") {
     lines.push(
-      `Encrypted copy: ${deliveryOut.manifest_url} (chunks alongside). The key is public on Base, so this file stays openable even without Keyframe's server${r.spec?.delivery === "private" ? " (private order: with your k_buyer)" : ""}.${watch ? "" : " keyframe_status shows Keyframe's watch link when one is available."}`,
+      `Encrypted copy: ${deliveryOut.manifest_url} (chunks alongside). The key is public on Base, so anyone with this encrypted copy can open and check it without trusting Keyframe's server${r.spec?.delivery === "private" ? " (private order: with your k_buyer)" : ""}.${watch ? "" : " keyframe_status shows Keyframe's watch link when one is available."}`,
     );
     // Keyframe's watch page (paid response or order record), only on Keyframe's own hosts; the label is fixed here.
     if (watch) lines.push(linkLine(watch));
