@@ -239,11 +239,8 @@ describe("paid path", () => {
     expect(body.funding_tx).toBe(`0x${"fa".repeat(32)}`);
     expect(fallbackCalls).toBe(1);
     await h.drain();
-    expect(h.relayer.sends.map((r) => r.kind)).toEqual(["fund", "register"]);
-    expect(h.factory.view(q.terms_hash).status).toBe(Status.Open);
-    // next keeper pass releases
-    const { keeperTick } = await import("../src/keeper.js");
-    await keeperTick(h.s, { waitMs: 0 });
+    // the post-payment advance registers T, then (next attempt) releases without waiting for a keeper tick
+    expect(h.relayer.sends.map((r) => r.kind)).toEqual(["fund", "register", "release"]);
     expect(h.factory.view(q.terms_hash).status).toBe(Status.Released);
   });
 

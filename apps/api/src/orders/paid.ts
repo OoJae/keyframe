@@ -1,6 +1,6 @@
 import { newOrderId, sha256Hex, type Terms } from "@keyframe/protocol";
 import type { Hex } from "viem";
-import type { PaymentRow, QuoteRow } from "../db/rows.js";
+import type { OrderRow, PaymentRow, QuoteRow } from "../db/rows.js";
 import { chargeUnknown, error, notCharged } from "../http.js";
 import { chargeable, DRAFT_RETRY_MS, publicStatus, termsOf } from "../quotes/view.js";
 import { errorText } from "../redact.js";
@@ -41,6 +41,25 @@ const wire = (r: WireResponse): Response => new Response(r.body, { status: r.sta
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const sigHash = (p: DecodedPayment) => sha256Hex(p.raw);
+
+/** Post-payment release attempts for an Instant order (the first advance plus retries). */
+const RELEASE_ATTEMPTS = 4;
+
+/**
+ * Right after payment the RPC can still be a block behind the funding tx: the factory reads None, the release is
+ * skipped, and the key would wait for the next keeper tick (up to a minute). An Instant order that is still sealed
+ * with nothing in flight is advanced again a few times, so the key is normally on Base seconds after payment.
+ */
+export async function advanceAfterPayment(s: Services, first: OrderRow): Promise<void> {
+  let order: OrderRow | null = first;
+  for (let attempt = 1; order; attempt++) {
+    await advanceOrder(s, order, 8_000);
+    if (first.tier !== "instant" || attempt >= RELEASE_ATTEMPTS) return;
+    order = await s.repo.getOrder(first.id);
+    if (order?.status !== "sealed" || order.pending_kind || order.release_tx) return;
+    await sleep(s.cfg.releaseRetryMs);
+  }
+}
 
 /** Another request holds this authorization: wait for its stored response or give up. */
 async function awaitSettled(s: Services, p: DecodedPayment, sig: string): Promise<Response | "failed" | "timeout"> {
@@ -246,7 +265,7 @@ async function settleAndRecord(
     }
     s.log.info("order_paid", { order_id: orderId, quote_id: q.id, rail: d.rail, funding: d.funding, tx: d.tx });
     background(
-      advanceOrder(s, order, 8_000).catch((e) =>
+      advanceAfterPayment(s, order).catch((e) =>
         s.log.error("advance_failed", { order_id: orderId, error: errorText(e, 160) }),
       ),
     );
@@ -273,7 +292,7 @@ async function settleAndRecord(
       const row = await s.repo.getPayment(p.fromLc, p.nonceLc);
       if (row?.status === "settled") {
         const order = await s.repo.getOrderByQuote(q.id);
-        if (order) background(advanceOrder(s, order, 8_000).catch(() => undefined));
+        if (order) background(advanceAfterPayment(s, order).catch(() => undefined));
         return servePaid(s.cfg, row, sig, nowS(s));
       }
     }

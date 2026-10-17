@@ -97,6 +97,7 @@ export class Harness {
       WORKER_TOKEN,
       RELAYER_PRIVATE_KEY: this.relayerKey,
       FORMATS_DISABLED: "chart_moment",
+      RELEASE_RETRY_MS: "0",
       ...o.env,
     };
     const cfg = parseConfig(env);

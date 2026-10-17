@@ -298,9 +298,10 @@ describe("L2 PayAI fallback ambiguity", () => {
     expect(res.status).toBe(200);
     PaidResponseSchema.parse(await res.json());
     await h.drain();
-    expect(h.factory.view(q.terms_hash).status).toBe(Status.Open); // registered by the request's follow-up
-    await keeperTick(h.s, { waitMs: 0 });
+    // registered, then released, by the request's own post-payment follow-up (no keeper tick needed)
     expect(h.factory.view(q.terms_hash).status).toBe(Status.Released);
+    await keeperTick(h.s, { waitMs: 0 });
+    expect(h.relayer.sends.filter((r) => r.kind === "release")).toHaveLength(1);
   });
 
   it("fallback times out and nothing moved yet: never 402 (charged 'unknown'), the claim is kept", async () => {

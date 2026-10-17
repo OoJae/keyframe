@@ -24,6 +24,7 @@ export interface RawEnv {
   QUOTE_TTL_S?: string;
   DRAFT_TTL_S?: string;
   MIN_RELEASE_MARGIN_S?: string;
+  RELEASE_RETRY_MS?: string;
   STUDIO_REVIEW_S?: string;
   STUDIO_KILL_FEE_BPS?: string;
   STUDIO_MAX_OPEN?: string;
@@ -69,6 +70,8 @@ export interface Config {
   quoteTtlS: number;
   draftTtlS: number;
   minReleaseMarginS: number;
+  /** Pause between the post-payment release attempts while the RPC catches up with the funding block. */
+  releaseRetryMs: number;
   studioReviewS: number;
   studioKillFeeBps: number;
   studioMaxOpen: number;
@@ -248,6 +251,7 @@ export function parseConfig(env: RawEnv): Config {
     quoteTtlS: int(env.QUOTE_TTL_S, 600, 120, 3600),
     draftTtlS: int(env.DRAFT_TTL_S, 900, 60, 7200),
     minReleaseMarginS: int(env.MIN_RELEASE_MARGIN_S, 300, MIN_RELEASE_MARGIN_FLOOR_S, 3600),
+    releaseRetryMs: int(env.RELEASE_RETRY_MS, 1500, 0, 10_000),
     studioReviewS: int(env.STUDIO_REVIEW_S, 86_400, 3600, 7 * 86_400),
     studioKillFeeBps: int(env.STUDIO_KILL_FEE_BPS, 0, 0, MAX_KILL_FEE_BPS),
     studioMaxOpen: int(env.STUDIO_MAX_OPEN, 3, 0, 100),
