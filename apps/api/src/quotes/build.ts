@@ -105,7 +105,16 @@ export function planQuote(r: QuoteRequest, cfg: Config, nowS?: number): ({ ok: t
     default: {
       style = r.params.style;
       if (!item.styles.includes(style)) {
-        return fail(400, "unknown_style", `${item.id} styles: ${item.styles.join(", ")}`);
+        // Agents often cannot see why a quote failed (a host may report only "failed"), so a format with a single
+        // style, or a placeholder such as "default", resolves to the format's own style. The quote shows the style
+        // used and the buyer previews it before paying. A format with several styles still refuses an unknown one.
+        const placeholder = /^(default|auto|any|standard|basic|none)$/i.test(style.trim());
+        const only = item.styles.length === 1 ? item.styles[0] : undefined;
+        const fallback = only ?? (placeholder ? item.styles[0] : undefined);
+        if (fallback === undefined) {
+          return fail(400, "unknown_style", `${item.id} styles: ${item.styles.join(", ")}`);
+        }
+        style = fallback;
       }
       if (r.format === "launch_sting") durationS = r.params.duration_s;
       else if (r.format === "kinetic_post") {

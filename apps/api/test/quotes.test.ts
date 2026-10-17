@@ -191,7 +191,6 @@ describe("POST /v1/quotes", () => {
     expect(await status(cd({ label: "x".repeat(33) }))).toBe(400);
     expect(await status(cd({ extra: 1 }))).toBe(400);
     expect(await status(sting({ logo_url: "http://x.example/logo.png" }))).toBe(400);
-    expect(await status(cd({ style: "nope" }))).toBe(400);
     // content policy runs before availability
     expect(await status(sting({ logo_url: "https://127.0.0.1/logo.png" }))).toBe(422);
     expect(await status(cd({ label: "nsfw drop" }))).toBe(422);
@@ -209,8 +208,12 @@ describe("POST /v1/quotes", () => {
       body: "{}",
     });
     expect(bad.status).toBe(415);
-    const err = await (await h.postJson("/v1/quotes", h.quoteBody(cd({ style: "nope" })))).json();
-    expect(err).toMatchObject({ error: "unknown_style", message: "countdown styles: tminus" });
+    // countdown has one style: an unknown or placeholder style resolves to it (the quote shows the style used)
+    for (const style of ["nope", "default"]) {
+      const res = await h.postJson("/v1/quotes", h.quoteBody(cd({ style })));
+      expect(res.status).toBe(201);
+      expect((await res.json()).spec).toMatchObject({ style: "tminus" });
+    }
   });
 
   it("fails closed when the OFAC list is stale (> 7 days) and cannot be refreshed", async () => {
