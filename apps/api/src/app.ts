@@ -4,6 +4,7 @@ import { siweChallenge, siweVerify } from "./auth/siwe.js";
 import { CATALOG, formatUsdc } from "./catalog.js";
 import { publicConfig } from "./config.js";
 import { llmsTxt, openApi } from "./discovery.js";
+import { serveFile } from "./files.js";
 import { error, json, readBody, readJson, safeEqual } from "./http.js";
 import {
   ClaimBody,
@@ -31,7 +32,6 @@ import { clientKey, RATE_RULES, throttle } from "./ratelimit.js";
 import { errorText } from "./redact.js";
 import { reviewChallenge, reviewSubmit } from "./reviews.js";
 import { nowS, type Services } from "./services.js";
-import { IMMUTABLE_CACHE, isPublicKey } from "./storage.js";
 
 // HTTP surface (frozen-interfaces.md §7 plus /files and /internal). Route handlers stay thin; behaviour lives in
 // the modules they call.
@@ -255,21 +255,7 @@ export function createApp(hooks: AppHooks) {
   });
 
   // Public artifact storage (used when FILES_BASE_URL points here, e.g. KV-backed deployments).
-  app.get("/files/*", async (c) => {
-    const key = c.req.path.slice("/files/".length);
-    if (!isPublicKey(key)) return error(404, { error: "not_found" });
-    const obj = await c.var.services.storage.get(key);
-    if (!obj) return error(404, { error: "not_found" });
-    return new Response(obj.bytes, {
-      status: 200,
-      headers: {
-        "Content-Type": obj.contentType,
-        "Cache-Control": IMMUTABLE_CACHE,
-        "Content-Length": String(obj.bytes.byteLength),
-        "Access-Control-Allow-Origin": "*",
-      },
-    });
-  });
+  app.get("/files/*", (c) => serveFile(c.var.services, c.req.path.slice("/files/".length), c.req.raw));
 
   // ------------------------------------------------------------------ internal (render worker, Studio CLI)
 

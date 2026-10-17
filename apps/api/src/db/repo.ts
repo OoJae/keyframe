@@ -500,6 +500,25 @@ export class Repo {
     return this.db.prepare("SELECT * FROM orders WHERE quote_id = ?").bind(quoteId).first<OrderRow>();
   }
 
+  /**
+   * Who a KFC1 manifest belongs to: the order that delivered it (Instant file, Studio delivery or its one revision),
+   * else the quote that committed to it before payment. Unindexed scan; only browser navigations ask (rare).
+   */
+  async ownerOfManifest(manifestHash: string): Promise<{ order_id: string | null; quote_id: string } | null> {
+    const o = await this.db
+      .prepare(
+        "SELECT id, quote_id FROM orders WHERE manifest_hash = ? OR revision_manifest_hash = ? ORDER BY created_at, id LIMIT 1",
+      )
+      .bind(manifestHash, manifestHash)
+      .first<{ id: string; quote_id: string }>();
+    if (o) return { order_id: o.id, quote_id: o.quote_id };
+    const q = await this.db
+      .prepare("SELECT id, order_id FROM quotes WHERE manifest_hash = ? ORDER BY created_at, id LIMIT 1")
+      .bind(manifestHash)
+      .first<{ id: string; order_id: string | null }>();
+    return q ? { order_id: q.order_id ?? null, quote_id: q.id } : null;
+  }
+
   async listOrdersByBuyer(buyerLc: string, limit: number): Promise<OrderRow[]> {
     const r = await this.db
       .prepare("SELECT * FROM orders WHERE buyer_lc = ? ORDER BY created_at DESC, id LIMIT ?")

@@ -16,6 +16,67 @@ export interface StorageAdapter {
   put(key: string, bytes: Uint8Array, contentType: string): Promise<void>;
   get(key: string): Promise<StoredObject | null>;
   exists(key: string): Promise<boolean>;
+  /** Native byte-range read (R2 reads only the range); adapters without it are sliced from get(). */
+  getRange?(key: string, spec: RangeSpec): Promise<RangedObject | null>;
+}
+
+/** One `Range: bytes=…` request: first-last (last open-ended when null) or the final `suffix` bytes. */
+export type RangeSpec = { first: number; last: number | null } | { suffix: number };
+
+export interface ByteRange {
+  offset: number;
+  length: number;
+}
+
+export interface RangedObject {
+  contentType: string;
+  /** Size of the whole object. */
+  size: number;
+  /** The satisfiable range, or null (416). */
+  range: ByteRange | null;
+  /** The range's bytes (empty when unsatisfiable). */
+  bytes: Uint8Array<ArrayBuffer>;
+}
+
+const RANGE_RE = /^bytes=(\d{0,15})-(\d{0,15})$/;
+
+/**
+ * A single byte range (RFC 9110 §14.1.2). null = serve the whole object: no header, another unit, several ranges or a
+ * syntactically invalid one (last < first), all of which a server may ignore.
+ */
+export function parseRange(header: string | null | undefined): RangeSpec | null {
+  const m = header ? RANGE_RE.exec(header.trim()) : null;
+  if (!m) return null;
+  const [, a = "", b = ""] = m;
+  if (a === "" && b === "") return null;
+  if (a === "") return { suffix: Number(b) };
+  const first = Number(a);
+  const last = b === "" ? null : Number(b);
+  return last !== null && last < first ? null : { first, last };
+}
+
+/** The range within an object of `size` bytes, or null when it is not satisfiable. */
+export function resolveRange(spec: RangeSpec, size: number): ByteRange | null {
+  if ("suffix" in spec) {
+    const length = Math.min(spec.suffix, size);
+    return length > 0 ? { offset: size - length, length } : null;
+  }
+  if (spec.first >= size) return null;
+  const last = spec.last === null ? size - 1 : Math.min(spec.last, size - 1);
+  return { offset: spec.first, length: last - spec.first + 1 };
+}
+
+export async function readRange(storage: StorageAdapter, key: string, spec: RangeSpec): Promise<RangedObject | null> {
+  if (storage.getRange) return storage.getRange(key, spec);
+  const o = await storage.get(key);
+  if (!o) return null;
+  const range = resolveRange(spec, o.bytes.byteLength);
+  return {
+    contentType: o.contentType,
+    size: o.bytes.byteLength,
+    range,
+    bytes: range ? o.bytes.slice(range.offset, range.offset + range.length) : new Uint8Array(0),
+  };
 }
 
 export const IMMUTABLE_CACHE = "public, max-age=31536000, immutable";
@@ -52,6 +113,16 @@ export class R2Storage implements StorageAdapter {
   }
   async exists(key: string): Promise<boolean> {
     return (await this.bucket.head(key)) !== null;
+  }
+  async getRange(key: string, spec: RangeSpec): Promise<RangedObject | null> {
+    const head = await this.bucket.head(key);
+    if (!head) return null;
+    const contentType = head.httpMetadata?.contentType ?? "application/octet-stream";
+    const range = resolveRange(spec, head.size);
+    if (!range) return { contentType, size: head.size, range: null, bytes: new Uint8Array(0) };
+    const o = await this.bucket.get(key, { range });
+    if (!o) return null;
+    return { contentType, size: head.size, range, bytes: new Uint8Array(await o.arrayBuffer()) };
   }
 }
 
