@@ -11,6 +11,7 @@ import { preflight } from "./preflight.ts";
 import { sealRoundTrip } from "./seal.ts";
 import { RenderWorker } from "./service.ts";
 import { stamp } from "./stamp.ts";
+import { STUDIO_HELP, studioCmd } from "./studio.ts";
 import {
   ASPECT_IDS,
   ASPECTS,
@@ -40,7 +41,7 @@ const HELP = `keyframe worker
   node src/cli.ts templates [--json]          list templates with their hashes (spec.template.hash)
   node src/cli.ts schema [--write]            print (or write templates/template.schema.json) the template.json schema
   node src/cli.ts preflight                   check node, ffmpeg, browser, templates; exit 1 on problems
-`;
+${STUDIO_HELP}`;
 
 class UsageError extends Error {}
 
@@ -62,6 +63,8 @@ export async function main(argv: string[]): Promise<number> {
         return await schemaCmd(rest);
       case "preflight":
         return await preflightCmd();
+      case "studio":
+        return await studioCmd(rest);
       case undefined:
       case "help":
       case "--help":

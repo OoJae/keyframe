@@ -159,6 +159,30 @@ export class ApiClient {
     );
   }
 
+  /** GET an /internal path (Studio CLI inbox). */
+  async getJson(p: string, signal?: AbortSignal): Promise<unknown> {
+    return withRetry(
+      async () => {
+        const res = await request(this.url(p), {
+          method: "GET",
+          headers: this.headers(),
+          timeoutMs: this.o.timeoutMs,
+          signal,
+        });
+        await expectOk(res, `GET ${p}`);
+        return (await res.json()) as unknown;
+      },
+      { what: `GET ${p}`, signal, log: this.o.log },
+    );
+  }
+
+  /** POST once (Studio routes change state; the caller re-runs on failure) and return the JSON answer. */
+  async post(p: string, body: unknown, signal?: AbortSignal): Promise<unknown> {
+    const res = await this.postJson(p, body, signal);
+    await expectOk(res, `POST ${p}`);
+    return (await res.json().catch(() => ({}))) as unknown;
+  }
+
   async failed(p: string, error: string, retryable: boolean): Promise<void> {
     await withRetry(
       async () => {
