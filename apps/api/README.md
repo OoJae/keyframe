@@ -124,6 +124,11 @@ pnpm -F @keyframe/api db:migrate:local && pnpm -F @keyframe/api dev
 USDC is the real FiatTokenV2_2 on a fork, so no `USDC_ADDRESS` override is needed. The render worker can point
 its `API_BASE` at the same dev server.
 
+The repo-root `scripts/e2e-fork.sh` (driver: `apps/api/scripts/e2e-fork.mjs`) automates all of this. It runs the fork, the deploy, this
+API in workerd with R2, the render worker and the built plugin over MCP stdio, plus an emulated PayBox. The scenarios
+are x402, direct rail, refunds, Studio and determinism. Results and the exact commands are in
+`docs/evidence/INTEGRATION.md`.
+
 ## Render-worker API (`/internal`, bearer `WORKER_TOKEN`, `X-Worker-Id` on job calls)
 
 | Call | Contract |

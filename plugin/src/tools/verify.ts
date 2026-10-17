@@ -152,6 +152,15 @@ async function funding(r: Resolved, input: VerifyInputT, budget: Budget, rpcUrls
         `${usdc(s.balance)} USDC is sealed at ${shortAddr(r.escrow)}${o.status === Status.None ? " (on-chain registration pending)" : ", registered on Base"}`,
       ),
     );
+  } else if (txHash && o.status === Status.None && s.rpc.get(receiptRead(txHash)).value === null) {
+    // The paid response may say funding "pending" (ADR-012): its transaction is broadcast but not mined yet. That is
+    // not sealed and not verified, but not a failed payment either; telling the agent "failed" invites a second payment.
+    checks.push(
+      skip(
+        "funded",
+        `not sealed yet: transaction ${shortHash(txHash)} is not on Base yet and the escrow holds ${usdc(s.balance)} of ${usdc(amount)} USDC; check again in a few seconds`,
+      ),
+    );
   } else {
     checks.push(fail("funded", `the escrow holds ${usdc(s.balance)} of ${usdc(amount)} USDC: not (fully) paid`));
   }

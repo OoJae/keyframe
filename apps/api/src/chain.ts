@@ -45,7 +45,11 @@ const readOnly = (what: string) => (): never => {
 export function viemChainReader(rpcUrl: string): ChainReader {
   const client = createPublicClient({
     chain: base,
-    transport: http(rpcUrl, { timeout: 4_000, retryCount: 1, batch: { wait: 5 } }),
+    // No JSON-RPC batching: viem keeps one batch scheduler per URL for the whole isolate, so a batch would carry
+    // calls from concurrent requests on one request's fetch. workerd cancels a request whose only pending work
+    // belongs to another request ("code had hung"), which turned the loser of two concurrent payments for one
+    // quote into a 500 instead of a 409 (e2e fork run, docs/evidence/INTEGRATION.md).
+    transport: http(rpcUrl, { timeout: 4_000, retryCount: 1, batch: false }),
   });
   return {
     async orderOf(factory, termsHash) {

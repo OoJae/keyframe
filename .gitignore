@@ -27,3 +27,5 @@ renders/
 !templates/**/samples/*.mp4
 .wrangler/
 .playwright-mcp/
+# e2e fork runs (scripts/e2e-fork.sh): logs, reports, local state; secrets are deleted at the end of a run
+.e2e/

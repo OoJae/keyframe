@@ -1,11 +1,12 @@
 // keyframe_verify funding + delivery against the mock chain and file host: real KFC1 ciphertext of a real
 // 1080x1920 6 s faststart MP4, real keys, 2-RPC cross-checks, tamper and budget behaviour (P9, P10).
 
+import { keccak256, toHex } from "viem";
 import { describe, expect, it } from "vitest";
 import { quoteTool } from "../src/tools/quote.js";
 import { verifyTool } from "../src/tools/verify.js";
 import { call, type Json, setup, stingInput } from "./harness/inproc.js";
-import { BUYER, MP4, type World } from "./harness/world.js";
+import { BUYER, FACTORY, MP4, type World } from "./harness/world.js";
 
 async function paidOrder(world: World, extra: Record<string, unknown> = {}) {
   const rec = await world.createQuote(
@@ -72,6 +73,32 @@ describe("keyframe_verify funding", () => {
     expect(s.verdict).toBe("failed");
     expect(s.envelope).toBe("NOT SEALED");
     expect(byId(s, "funded").status).toBe("fail");
+  });
+
+  it('is partial (not failed) while the paid response\'s funding tx is not mined yet (funding "pending")', async () => {
+    const world = setup();
+    const rec = await world.createQuote(
+      quoteTool.inputSchema.parse(stingInput(BUYER.address)) as Record<string, unknown>,
+    );
+    const qid = rec.quote.quote_id as string;
+    rec.quote.status = "paid";
+    const tx = keccak256(toHex(`pending:${qid}`));
+    const paid = { ...world.paidBody(qid, tx), funding: "pending" };
+    let s = (await call(verifyTool, { mode: "funding", paid_response: paid })).structuredContent as Record<
+      string,
+      Json
+    >;
+    expect(s.verdict).toBe("partial");
+    expect(s.envelope).toBe("NOT SEALED");
+    expect(byId(s, "funded")).toMatchObject({ status: "skip" });
+    expect(byId(s, "funded").detail).toMatch(/not sealed yet/);
+    expect(byId(s, "funding_tx").status).toBe("skip");
+    // Once that transaction is mined without moving the money, it is a failure again.
+    world.receipts.set(tx, { status: "0x1", to: FACTORY, logs: [] });
+    s = (await call(verifyTool, { mode: "funding", paid_response: paid })).structuredContent as Record<string, Json>;
+    expect(s.verdict).toBe("failed");
+    expect(byId(s, "funded").status).toBe("fail");
+    expect(byId(s, "funding_tx").status).toBe("fail");
   });
 
   it("is only partial when one RPC is down, and flags RPCs that disagree", async () => {
