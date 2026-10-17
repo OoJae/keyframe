@@ -10,6 +10,11 @@ the API bundle in workerd, the render worker producing real HyperFrames renders,
 No frozen surface changed: `tool-catalog.json` is byte-identical. The bundle sha256 changed because of one plugin fix
 (see below).
 
+**Re-run after the evening changes: PASS, 49/49** (run `20261017T115816Z`). This run includes the watch page and links, the
+studio_offline gate, the honest catalog, the post-payment release retry (on 2 s blocks the key is published 3.0-3.4 s
+after payment), the relayer gas floor, the countdown timezone fix, and the plugin bundle `01735160…`. Step 12.2 now
+delivers the Studio order with the real `studio` CLI (`apps/worker`) instead of hand-rolled HTTP.
+
 ## What runs
 
 | Component | How it runs |
