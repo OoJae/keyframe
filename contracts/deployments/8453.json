@@ -1,0 +1,14 @@
+{
+  "block": 52720605,
+  "chainId": 8453,
+  "compiler": "solc 0.8.30, cancun, optimizer 10000 runs, no via-IR, no CBOR metadata",
+  "create2Deployer": "0x4e59b44847b379578588920cA78FbF26c0B4956C",
+  "factory": "0xd9d55954366Bb9ce979B992DE7218DAF1d61e561",
+  "factoryRuntimeCodeHash": "0x4aeda935f71452aec70cb270ac992dcffae00df7e3b1e73a38954497a809c37b",
+  "initCodeHash": "0x2d80e0cd1c72ac08f6d60a7173407baf214d1e887052a42e1ad74567a4a7167a",
+  "salt": "0x2c826fab36d5a5bf5763b1e8c6c7465ad952f6c607005a1a0265861aaae94cb7",
+  "seller": "0xEB61c1D92Bb9C9531E7dFf066A8bcC4176C45f14",
+  "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  "vaultImpl": "0xbFB15A493b081070D1cB9ec51Ce0f3e40005728d",
+  "vaultImplRuntimeCodeHash": "0x068b33d6da0372366524eb4ae0de0e5c046b5f5eddb6ff9ebd6c27bd98bacf30"
+}

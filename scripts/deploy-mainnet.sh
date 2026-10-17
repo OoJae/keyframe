@@ -27,8 +27,10 @@ die() { echo "error: $*" >&2; exit 1; }
 set -a; . "$ENVF"; set +a
 RPC="https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY:?ALCHEMY_API_KEY missing in .env}"
 
-put_env() { # put_env NAME VALUE — append if absent; never echoes VALUE
-  grep -q "^$1=" "$ENVF" || printf '%s=%s\n' "$1" "$2" >> "$ENVF"
+put_env() { # put_env NAME VALUE — append if absent (on its own line); never echoes VALUE
+  grep -q "^$1=" "$ENVF" && return 0
+  [ -z "$(tail -c1 "$ENVF")" ] || printf '\n' >> "$ENVF"
+  printf '%s=%s\n' "$1" "$2" >> "$ENVF"
 }
 rand_hex() { node -e "console.log(require('crypto').randomBytes($1).toString('hex'))"; }
 
@@ -70,9 +72,9 @@ cmd_factory() {
   local args; args=$(cast abi-encode "constructor(address,address)" "$USDC" "$SELLER_ADDRESS")
   for v in sourcify blockscout; do
     local extra=(); [ "$v" = blockscout ] && extra=(--verifier-url https://base.blockscout.com/api/)
-    (cd "$ROOT/contracts" && forge verify-contract --chain 8453 --verifier "$v" "${extra[@]}" \
+    (cd "$ROOT/contracts" && forge verify-contract --chain 8453 --verifier "$v" ${extra[@]+"${extra[@]}"} \
         --constructor-args "$args" "$f" src/KeyframeEscrowFactory.sol:KeyframeEscrowFactory 2>&1 | tail -2) || echo "($v verify: retry later)"
-    (cd "$ROOT/contracts" && forge verify-contract --chain 8453 --verifier "$v" "${extra[@]}" \
+    (cd "$ROOT/contracts" && forge verify-contract --chain 8453 --verifier "$v" ${extra[@]+"${extra[@]}"} \
         "$impl" src/KeyframeVault.sol:KeyframeVault 2>&1 | tail -2) || true
   done
 }
@@ -123,14 +125,14 @@ cmd_portal() {
   rel=$(cast wallet address --private-key "${RELAYER_PRIVATE_KEY:?run relayer first}")
   cat <<EOF
 Developer portal → Test & configure
-  Network hosts:  ${PUBLIC_BASE_URL#https://}   mainnet.base.org   base-rpc.publicnode.com
+  Network hosts:  ${PUBLIC_BASE_URL#https://}   base-rpc.publicnode.com   base.drpc.org   mainnet.base.org
   Environment variables:
     KEYFRAME_API_BASE   = $PUBLIC_BASE_URL
     KEYFRAME_FILES_BASE = $PUBLIC_BASE_URL/files
     KEYFRAME_FACTORIES  = [{"address":"$f","vaultImpl":"$impl","status":"active"}]
     KEYFRAME_SELLERS    = $(cast to-check-sum-address "$SELLER_ADDRESS")
     KEYFRAME_OPERATORS  = $rel
-    KEYFRAME_RPC_URLS   = https://mainnet.base.org,https://base-rpc.publicnode.com
+    KEYFRAME_RPC_URLS   = https://base-rpc.publicnode.com,https://base.drpc.org,https://mainnet.base.org
   Upload: $ROOT/plugin/dist/plugin.mjs  (sha256 $(shasum -a 256 "$ROOT/plugin/dist/plugin.mjs" | cut -c1-64))
 EOF
 }
