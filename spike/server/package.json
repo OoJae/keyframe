@@ -12,7 +12,8 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
-    "local": "tsx scripts/local-node.ts"
+    "selftest": "tsx scripts/selftest.ts",
+    "verify:local": "bash scripts/local-verify.sh"
   },
   "dependencies": {
     "@x402/core": "2.28.0",

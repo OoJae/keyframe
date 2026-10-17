@@ -1,0 +1,31 @@
+# Keyframe DAY-1 interop spike API (Cloudflare Workers).
+# Secrets are NOT in this file: `wrangler secret put SPIKE_MNEMONIC` (required), `wrangler secret put SPIKE_ADMIN_TOKEN` (optional).
+name = "keyframe-spike"
+main = "src/index.ts"
+compatibility_date = "2026-09-30"
+# enable_request_signal: request.signal fires when the client disconnects (used by PAID_DELAY_MS to skip settlement).
+compatibility_flags = ["enable_request_signal"]
+workers_dev = true
+
+[observability]
+enabled = true
+
+[[kv_namespaces]]
+binding = "SPIKE_KV"
+# Paste the id printed by: pnpm exec wrangler kv namespace create SPIKE_KV
+id = "cf92204a268b409db53d0ed116757b4e"
+
+[vars]
+# Canonical origin used in every 402 resource URL (https, no path, no trailing slash).
+PUBLIC_BASE_URL = "https://keyframe-spike.keyframe-spike-server.workers.dev"
+# v2 = PAYMENT-REQUIRED header + {} body (default); v1 = JSON body only (network "base", maxAmountRequired).
+X402_MODE = "v2"
+# Sleep before verify on paid requests (S8 ladder: 0 / 4000 / 9000 / 20000). Settlement is skipped if the client left.
+PAID_DELAY_MS = "0"
+# wait = settle synchronously through the facilitator (default); broadcast = answer 200 after verify, settle in background.
+SETTLE_MODE = "wait"
+FACILITATOR_URL = "https://facilitator.payai.network"
+# Upper bound for quote amounts in atomic USDC (hard cap 50 USDC = 50000000).
+MAX_AMOUNT_ATOMIC = "50000000"
+# S7: pad the paid 200 body with an s7 object of this many filler bytes (0 = small body).
+PAID_BODY_PAD_BYTES = "0"

@@ -26,3 +26,4 @@ renders/
 *.wav
 !templates/**/samples/*.mp4
 .wrangler/
+.playwright-mcp/
